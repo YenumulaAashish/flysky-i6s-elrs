@@ -25,7 +25,7 @@ pub fn update_radio_setup(
         buzzer.click();
         return;
     }
-    const SETUP_ITEMS: usize = 17;
+    const SETUP_ITEMS: usize = 18;
 
     widgets::navigate_4slot_list(
         &mut ctrl.selected_item,
@@ -148,6 +148,11 @@ pub fn update_radio_setup(
             }
             16 => {
                 buzzer.click();
+                storage.radio.switch_beep = if storage.radio.switch_beep == 0 { 1 } else { 0 };
+                storage::save_radio_config(storage);
+            }
+            17 => {
+                buzzer.click();
                 ctrl.state = MenuState::InputSetup;
                 ctrl.selected_item = 0;
                 ctrl.scroll_offset = 0;
@@ -173,15 +178,15 @@ pub fn update_radio_setup(
                     2 => "LINEAR",
                     _ => "OFF (Lock)",
                 };
-                widgets::draw_list_row(lcd, slot, is_sel, "Thr Trim:", Some(val_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Thr Trim:", Some(val_str));
             }
             1 => {
                 let beeper_str = if storage.radio.audio_enabled != 0 { "ENABLED" } else { "MUTED" };
-                widgets::draw_list_row(lcd, slot, is_sel, "Beeper:", Some(beeper_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Beeper:", Some(beeper_str));
             }
             2 => {
                 let tone_str = if storage.radio.tone_style != 0 { "RICH" } else { "SIMPLE" };
-                widgets::draw_list_row(lcd, slot, is_sel, "Tones:", Some(tone_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Tones:", Some(tone_str));
             }
             3 => {
                 let timer_str = match storage.radio.backlight_timeout {
@@ -190,23 +195,23 @@ pub fn update_radio_setup(
                     3 => "60 SEC",
                     _ => "ALWAYS ON",
                 };
-                widgets::draw_list_row(lcd, slot, is_sel, "BL Timer:", Some(timer_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "BL Timer:", Some(timer_str));
             }
             4 => {
                 let mut b_buf = [0u8; 4];
                 let pct = (storage.radio.backlight_brightness * 10).min(100);
                 let b_str = format_pct_3(pct, &mut b_buf);
-                widgets::draw_list_row(lcd, slot, is_sel, "BL Level:", Some(b_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "BL Level:", Some(b_str));
             }
             5 => {
                 let mut c_buf = [0u8; 2];
                 let c_str = format_u8_2(storage.radio.lcd_contrast, &mut c_buf);
-                widgets::draw_list_row(lcd, slot, is_sel, "Contrast:", Some(c_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Contrast:", Some(c_str));
             }
             6 => {
                 let mut v_buf = [0u8; 4];
                 let v_str = format_deci_volt(storage.radio.vbat_warn_deci, &mut v_buf);
-                widgets::draw_list_row(lcd, slot, is_sel, "Bat Warn:", Some(v_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Bat Warn:", Some(v_str));
             }
             7 => {
                 let usb_str = match storage.radio.usb_mode {
@@ -215,23 +220,23 @@ pub fn update_radio_setup(
                     3 => "COMPOSITE",
                     _ => "OFF",
                 };
-                widgets::draw_list_row(lcd, slot, is_sel, "USB Mode:", Some(usb_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "USB Mode:", Some(usb_str));
             }
             8 => {
                 let pwr_str = if storage.radio.ext_module_pwr == 0 { "HIGH (N)" } else { "LOW (P)" };
-                widgets::draw_list_row(lcd, slot, is_sel, "H1 PF6 Pwr:", Some(pwr_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "H1 PF6 Pwr:", Some(pwr_str));
             }
             9 => {
                 let j4_str = if storage.radio.j4_sg_sh_en != 0 { "SG/SH BTN" } else { "SWD (DBG)" };
-                widgets::draw_list_row(lcd, slot, is_sel, "J4 Mode:", Some(j4_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "J4 Mode:", Some(j4_str));
             }
             10 => {
                 let dup_str = if storage.radio.crsf_duplex != 0 { "HALF (PB6)" } else { "FULL (PB6/7)" };
-                widgets::draw_list_row(lcd, slot, is_sel, "CRSF Bay:", Some(dup_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "CRSF Bay:", Some(dup_str));
             }
             11 => {
                 let ppm_str = if storage.radio.ppm_out_en != 0 { "ENABLED" } else { "OFF" };
-                widgets::draw_list_row(lcd, slot, is_sel, "PF10 PPM:", Some(ppm_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "PF10 PPM:", Some(ppm_str));
             }
             12 => {
                 let left_str = match storage.radio.rear_left_func {
@@ -239,7 +244,7 @@ pub fn update_radio_setup(
                     2 => "TRIMS MOD",
                     _ => "RC SW (SWE)",
                 };
-                widgets::draw_list_row(lcd, slot, is_sel, "Rear L Key:", Some(left_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Rear L Key:", Some(left_str));
             }
             13 => {
                 let right_str = match storage.radio.rear_right_func {
@@ -247,11 +252,11 @@ pub fn update_radio_setup(
                     2 => "TRIMS MOD",
                     _ => "RC SW (SWF)",
                 };
-                widgets::draw_list_row(lcd, slot, is_sel, "Rear R Key:", Some(right_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Rear R Key:", Some(right_str));
             }
             14 => {
                 let touch_str = if storage.radio.touch_disabled == 0 { "ENABLED" } else { "DISABLED" };
-                widgets::draw_list_row(lcd, slot, is_sel, "Touch Screen:", Some(touch_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Touch Screen:", Some(touch_str));
             }
             15 => {
                 let mode_str = match storage.radio.stick_mode {
@@ -261,10 +266,14 @@ pub fn update_radio_setup(
                     3 => "MODE 4",
                     _ => "MODE 2",
                 };
-                widgets::draw_list_row(lcd, slot, is_sel, "Stick Mode:", Some(mode_str), 62);
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Stick Mode:", Some(mode_str));
             }
             16 => {
-                widgets::draw_list_row(lcd, slot, is_sel, "Inputs:", Some("[SETUP]"), 62);
+                let sw_snd_str = if storage.radio.switch_beep != 0 { "ENABLED" } else { "MUTED" };
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Sw Sound:", Some(sw_snd_str));
+            }
+            17 => {
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Inputs:", Some("[SETUP]"));
             }
             _ => {}
         }

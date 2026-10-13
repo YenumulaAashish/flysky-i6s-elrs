@@ -219,57 +219,60 @@ impl MenuController {
 
         // Spring-Loaded Jog Wheels (VRA / VRB) Jog-Shuttle Navigation
         // Neutral deadband: [-300, 300]
-        // Clockwise deflection (> 300): scroll DOWN
-        // Counter-clockwise deflection (< -300): scroll UP
+        // Clockwise deflection (> 300): scroll DOWN / increment value
+        // Counter-clockwise deflection (< -300): scroll UP / decrement value
         // Immediate response when switching directions (-1 <-> 1) or entering from center (0)
         // Repeat pacing: 350 ms initial hold delay to prevent overshoot, then 240 ms repeat
         let mut pot_change = None;
         if self.editing {
-            if pots.vr1.abs() >= 300 {
-                pot_change = Some(5); // MixSource::Vra
-            } else if pots.vr2.abs() >= 300 {
-                pot_change = Some(6); // MixSource::Vrb
-            }
-            self.jog_deflection_dir = 0;
-            self.jog_repeat_timer_ms = 0;
-        } else {
-            let current_dir: i8 = if pots.vr1 > 300 || pots.vr2 > 300 {
-                1
-            } else if pots.vr1 < -300 || pots.vr2 < -300 {
-                -1
-            } else {
-                0
-            };
+            let is_source_selection = self.state == MenuState::AuxChannels
+                || (self.state == MenuState::MixerLineEdit && self.selected_item == 1);
 
-            if current_dir != 0 {
-                if self.jog_deflection_dir != current_dir {
-                    // Direction change or fresh deflection from center:
-                    // Trigger immediate single step!
+            if is_source_selection {
+                if pots.vr1.abs() >= 300 {
+                    pot_change = Some(5); // MixSource::Vra
+                } else if pots.vr2.abs() >= 300 {
+                    pot_change = Some(6); // MixSource::Vrb
+                }
+            }
+        }
+
+        let current_dir: i8 = if pots.vr1 > 300 || pots.vr2 > 300 {
+            1
+        } else if pots.vr1 < -300 || pots.vr2 < -300 {
+            -1
+        } else {
+            0
+        };
+
+        if current_dir != 0 {
+            if self.jog_deflection_dir != current_dir {
+                // Direction change or fresh deflection from center:
+                // Trigger immediate single step!
+                if current_dir == 1 {
+                    down_pressed = true;
+                } else {
+                    up_pressed = true;
+                }
+                self.jog_deflection_dir = current_dir;
+                self.jog_repeat_timer_ms = 0;
+            } else {
+                // Sustained hold in the same direction:
+                // Wait 350 ms initial hold delay before repeating, then repeat every 240 ms
+                self.jog_repeat_timer_ms = self.jog_repeat_timer_ms.saturating_add(33);
+                if self.jog_repeat_timer_ms >= 350 {
                     if current_dir == 1 {
                         down_pressed = true;
                     } else {
                         up_pressed = true;
                     }
-                    self.jog_deflection_dir = current_dir;
-                    self.jog_repeat_timer_ms = 0;
-                } else {
-                    // Sustained hold in the same direction:
-                    // Wait 350 ms initial hold delay before repeating, then repeat every 240 ms
-                    self.jog_repeat_timer_ms = self.jog_repeat_timer_ms.saturating_add(33);
-                    if self.jog_repeat_timer_ms >= 350 {
-                        if current_dir == 1 {
-                            down_pressed = true;
-                        } else {
-                            up_pressed = true;
-                        }
-                        self.jog_repeat_timer_ms = 350 - 240;
-                    }
+                    self.jog_repeat_timer_ms = 350 - 240;
                 }
-            } else {
-                // Centered in deadband: reset deflection state immediately
-                self.jog_deflection_dir = 0;
-                self.jog_repeat_timer_ms = 0;
             }
+        } else {
+            // Centered in deadband: reset deflection state immediately
+            self.jog_deflection_dir = 0;
+            self.jog_repeat_timer_ms = 0;
         }
 
         let sw_change = switches.detect_condition_change(&self.prev_switches);

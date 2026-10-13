@@ -135,7 +135,8 @@ pub struct RadioConfig {
     pub ppm_out_en: u8,            // 111 (0: Disabled, 1: Enabled PPM output on PF10)
     pub adc_modes: [u8; 6],        // 112..118: Input modes for the 6 auxiliary analog channels
     pub stick_mode: u8,            // 118 (0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4)
-    pub _reserved: [u8; 9],        // 119..128 (9 bytes reserved, exact 128-byte guarantee)
+    pub switch_beep: u8,           // 119 (0: Off, 1: Enabled audible beep on switch state change)
+    pub _reserved: [u8; 8],        // 120..128 (8 bytes reserved, exact 128-byte guarantee)
 }
 
 impl RadioConfig {
@@ -206,7 +207,8 @@ impl RadioConfig {
             ppm_out_en: 0,
             adc_modes: [0; 6],
             stick_mode: 1, // Mode 2 default
-            _reserved: [0; 9],
+            switch_beep: 1, // Default enabled
+            _reserved: [0; 8],
         }
     }
 }
@@ -425,6 +427,9 @@ impl RadioStorage {
         }
         if self.radio.stick_mode > 3 {
             self.radio.stick_mode = 1; // Default to Mode 2
+        }
+        if self.radio.switch_beep > 1 {
+            self.radio.switch_beep = 0;
         }
 
         for stick in self.radio.sticks.iter_mut() {

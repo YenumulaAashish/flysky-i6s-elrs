@@ -121,12 +121,17 @@ pub fn touch_to_nav_keys_with_tracker(
     let mut keys = 0u16;
 
     // 1. Hardware Gesture Register Decoding (if provided by controller)
-    match sample.gesture {
-        Gesture::SwipeUp => keys |= KEY_NAV_UP,
-        Gesture::SwipeDown => keys |= KEY_NAV_DOWN,
-        Gesture::SwipeRight => keys |= KEY_NAV_OK,
-        Gesture::SwipeLeft => keys |= KEY_NAV_CANCEL,
-        Gesture::None => {}
+    // In menu_active, software drag displacement handles scrolling with precise pacing.
+    // Suppress hardware swipe gestures when menu_active is true or tracker has already swiped
+    // to prevent the FT6236 controller from firing a duplicate/spurious scroll step on finger release!
+    if !menu_active && !tracker.swiped {
+        match sample.gesture {
+            Gesture::SwipeUp => keys |= KEY_NAV_UP,
+            Gesture::SwipeDown => keys |= KEY_NAV_DOWN,
+            Gesture::SwipeRight => keys |= KEY_NAV_OK,
+            Gesture::SwipeLeft => keys |= KEY_NAV_CANCEL,
+            Gesture::None => {}
+        }
     }
 
     if let Some(pt) = sample.point {
@@ -497,25 +502,25 @@ mod tests {
             gesture: Gesture::SwipeUp,
             point: None,
         };
-        assert_eq!(touch_to_nav_keys(&sample_up, true), KEY_NAV_UP);
+        assert_eq!(touch_to_nav_keys(&sample_up, false), KEY_NAV_UP);
 
         let sample_down = TouchSample {
             gesture: Gesture::SwipeDown,
             point: None,
         };
-        assert_eq!(touch_to_nav_keys(&sample_down, true), KEY_NAV_DOWN);
+        assert_eq!(touch_to_nav_keys(&sample_down, false), KEY_NAV_DOWN);
 
         let sample_right = TouchSample {
             gesture: Gesture::SwipeRight,
             point: None,
         };
-        assert_eq!(touch_to_nav_keys(&sample_right, true), KEY_NAV_OK);
+        assert_eq!(touch_to_nav_keys(&sample_right, false), KEY_NAV_OK);
 
         let sample_left = TouchSample {
             gesture: Gesture::SwipeLeft,
             point: None,
         };
-        assert_eq!(touch_to_nav_keys(&sample_left, true), KEY_NAV_CANCEL);
+        assert_eq!(touch_to_nav_keys(&sample_left, false), KEY_NAV_CANCEL);
     }
 
     #[test]

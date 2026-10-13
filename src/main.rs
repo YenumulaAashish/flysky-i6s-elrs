@@ -260,6 +260,8 @@ struct BackgroundIdleManager {
     prev_right_btn: bool,
     latched_keys: u16,
     last_center_touch_ms: u32,
+    menu_led_phase: bool,
+    menu_led_timer_ms: u16,
 }
 
 impl BackgroundIdleManager {
@@ -304,6 +306,8 @@ impl BackgroundIdleManager {
             prev_right_btn: false,
             latched_keys: 0,
             last_center_touch_ms: 0,
+            menu_led_phase: true,
+            menu_led_timer_ms: 0,
         }
     }
 
@@ -338,12 +342,13 @@ impl BackgroundIdleManager {
 
         // Pot Center Crossing Audio Feedback for all configured potentiometers (continuous or detented)
         // Detect transitions across deadband ±25 from outside (|prev| >= 25 && |curr| < 25)
+        // Disabled while navigating menus to avoid distracting clicks
         for ch in 0..6 {
             let mode = storage::AdcInputMode::resolve(ch, storage.radio.adc_modes[ch]);
             if mode.is_pot() {
                 let curr = flight.state.aux_pots[ch];
                 let prev = &mut self.prev_pots[ch];
-                if prev.abs() >= 25 && curr.abs() < 25 {
+                if !menu_active && prev.abs() >= 25 && curr.abs() < 25 {
                     buzzer.pot_center_click();
                 }
                 *prev = curr;
@@ -368,7 +373,12 @@ impl BackgroundIdleManager {
         self.prev_stick_samples[5] = flight.state.raw[7];
 
         let sw_changed = flight.state.switches != self.prev_switches;
-        self.prev_switches = flight.state.switches;
+        if sw_changed {
+            if !menu_active && storage.radio.switch_beep != 0 {
+                buzzer.click();
+            }
+            self.prev_switches = flight.state.switches;
+        }
 
         let user_active = keys != 0 || stick_moved || sw_changed;
 
@@ -703,6 +713,22 @@ impl BackgroundIdleManager {
 
         // Accumulate instantaneous key events across background ticks
         self.latched_keys |= keys;
+
+        // Front Button LED Backlight Handling:
+        // In flight mode: solid blue illumination
+        // In menu / calib mode: blink blue LEDs (~500ms period) for visual mode feedback
+        if menu_active {
+            self.menu_led_timer_ms = self.menu_led_timer_ms.saturating_add(dt_ms);
+            if self.menu_led_timer_ms >= 250 {
+                self.menu_led_timer_ms = 0;
+                self.menu_led_phase = !self.menu_led_phase;
+                power::set_leds(self.menu_led_phase);
+            }
+        } else if !self.menu_led_phase {
+            self.menu_led_phase = true;
+            self.menu_led_timer_ms = 0;
+            power::set_leds(true);
+        }
 
         // 9. Display Frame Rendering (~30 Hz)
         let run_display = now.wrapping_sub(self.last_display_ms) >= 33;
