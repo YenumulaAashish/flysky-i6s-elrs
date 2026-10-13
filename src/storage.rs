@@ -137,7 +137,8 @@ pub struct RadioConfig {
     pub stick_mode: u8,            // 118 (0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4)
     pub switch_beep: u8,           // 119 (0: Off, 1: Enabled audible beep on switch state change)
     pub ext_switches_en: u8,       // 120 (0: Disabled, 1: Enabled PB6/PB7 & PF10 as extra GPIO switches)
-    pub _reserved: [u8; 7],        // 121..128 (7 bytes reserved, exact 128-byte guarantee)
+    pub telem_slots: [u8; 4],      // 121..125: Configurable telemetry dashboard sensor slots (1..4)
+    pub _reserved: [u8; 3],        // 125..128 (3 bytes reserved, exact 128-byte guarantee)
 }
 
 impl RadioConfig {
@@ -210,7 +211,8 @@ impl RadioConfig {
             stick_mode: 1, // Mode 2 default
             switch_beep: 1, // Default enabled
             ext_switches_en: 0,
-            _reserved: [0; 7],
+            telem_slots: [0, 1, 2, 3], // Default: RxBat, RSSI/LQ, TxBat, Current/Pwr
+            _reserved: [0; 3],
         }
     }
 }
@@ -1094,26 +1096,42 @@ pub fn load_storage() -> RadioStorage {
 
 /// Save only the active model configuration via append-only log (~2.8 ms, 0 page erase).
 pub fn save_active_model(storage: &RadioStorage) -> bool {
-    let mut map = sequential_storage::map::MapStorage::new(
-        Stm32Flash,
-        storage_config(),
-        sequential_storage::cache::Cache::new_uncached(),
-    );
-    let mut buf = [0u8; 256];
-    let idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
-    let key = KEY_MODEL_BASE + idx as u8;
-    block_on(map.store_item(&mut buf, &key, &storage.models[idx])).is_ok()
+    #[cfg(test)]
+    {
+        let _ = storage;
+        return true;
+    }
+    #[cfg(not(test))]
+    {
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 256];
+        let idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
+        let key = KEY_MODEL_BASE + idx as u8;
+        block_on(map.store_item(&mut buf, &key, &storage.models[idx])).is_ok()
+    }
 }
 
 /// Save only the system radio configuration via append-only log (~2.8 ms, 0 page erase).
 pub fn save_radio_config(storage: &RadioStorage) -> bool {
-    let mut map = sequential_storage::map::MapStorage::new(
-        Stm32Flash,
-        storage_config(),
-        sequential_storage::cache::Cache::new_uncached(),
-    );
-    let mut buf = [0u8; 256];
-    block_on(map.store_item(&mut buf, &KEY_RADIO, &storage.radio)).is_ok()
+    #[cfg(test)]
+    {
+        let _ = storage;
+        return true;
+    }
+    #[cfg(not(test))]
+    {
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 256];
+        block_on(map.store_item(&mut buf, &KEY_RADIO, &storage.radio)).is_ok()
+    }
 }
 
 /// Save complete storage to Flash.
