@@ -267,7 +267,7 @@ pub struct ModelConfig {
     pub failsafe_mode: u8, // 118: 0: Hold last, 1: Custom pulses
     pub failsafe_timeout: u8, // 119: 10..50 (1.0s..5.0s)
     pub rf_protocol: u8,  // 120: 0: AFHDS 2A, 1: CRSF / ELRS
-    pub crsf_baud: u8,    // 121: 0: 420k, 1: 416.6k, 2: 115.2k, 3: 921.6k
+    pub crsf_baud: u8,    // 121: 0: 420k, 1: 416.6k, 2: 115.2k, 3: 921.6k, 4: 1.87M
     pub arm_switch: u8, // 122: 0: None, 1: SA^, 2: SAv, 3: SB^, 4: SB-, 5: SBv, 6: SC^, 7: SC-, 8: SCv, 9: SD^, 10: SDv
     pub rx_out_mode: u8, // 123: 0: PWM, 1: PPM (default 0)
     pub servo_rate_hz: u16, // 124..126: 50..400 Hz (default 50 Hz)
@@ -469,7 +469,7 @@ impl RadioStorage {
             if m.rf_protocol > 1 {
                 m.rf_protocol = 0;
             }
-            if m.crsf_baud > 3 {
+            if m.crsf_baud > 4 {
                 m.crsf_baud = 0;
             }
             for axis in 0..3 {

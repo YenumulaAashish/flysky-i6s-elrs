@@ -482,16 +482,16 @@ pub fn update_rx_setup(
                 }
             }
             1 => {
-                // Baud Rate (CRSF only): 0 = 420k, 1 = 416.6k, 2 = 115.2k, 3 = 921.6k
+                // Baud Rate (CRSF only): 0 = 420k, 1 = 416.6k, 2 = 115.2k, 3 = 921.6k, 4 = 1.87M
                 if keys.up {
                     storage.models[active_idx].crsf_baud = if storage.models[active_idx].crsf_baud > 0 {
                         storage.models[active_idx].crsf_baud - 1
                     } else {
-                        3
+                        4
                     };
                     buzzer.play_tone(2200, 30);
                 } else if keys.down {
-                    storage.models[active_idx].crsf_baud = (storage.models[active_idx].crsf_baud + 1) % 4;
+                    storage.models[active_idx].crsf_baud = (storage.models[active_idx].crsf_baud + 1) % 5;
                     buzzer.play_tone(2200, 30);
                 }
             }
@@ -587,6 +587,7 @@ pub fn update_rx_setup(
             1 => "416.6k (TBS)",
             2 => "115.2k (Low)",
             3 => "921.6k (Fast)",
+            4 => "1.87M (Max)",
             _ => "420k (ELRS)",
         };
         line_buf[0] = b_arrow;

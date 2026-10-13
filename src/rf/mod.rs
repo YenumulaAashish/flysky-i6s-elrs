@@ -164,14 +164,16 @@ pub fn get_last_chip_id() -> u8 {
     a7105::LAST_CHIP_ID.load(Ordering::Relaxed)
 }
 
-/// Put RF frontend and A7105 into standby (silent running) during USB Joystick simulator mode.
+/// Put RF frontend and A7105 into deep sleep (silent running & power saving) during CRSF or USB Joystick simulator mode.
 pub fn set_silenced(silenced: bool) {
     let prev = RF_SILENCED.load(Ordering::Relaxed);
     if prev != silenced {
         RF_SILENCED.store(silenced, Ordering::Relaxed);
         if silenced {
-            a7105::strobe(a7105::STROBE_STANDBY);
+            a7105::strobe(a7105::STROBE_SLEEP);
             spi::set_tx_rx_mode(spi::RF_MODE_OFF);
+        } else {
+            a7105::strobe(a7105::STROBE_STANDBY);
         }
     }
 }
