@@ -8,6 +8,19 @@
 //! - CH8:      PB0      (Potentiometer VR2 / VRB)
 //! - CH9:      PB1      (Switch SD)
 //! - CH10:     PC0      (Battery Voltage sense)
+//!
+//! ### Additional ADC Channels for Hardware Modding (STM32F072VBT6 LQFP100):
+//! The FS-i6S transmitter utilizes an STM32F072VBT6 (100-pin LQFP) MCU.
+//! On this package, ADC1 has up to 16 external channels. Channels currently unrouted:
+//! - `PC1` (ADC1_IN11, Pin 16): Available on MCU pin for direct wire soldering.
+//! - `PC2` (ADC1_IN12, Pin 17): Available on MCU pin for direct wire soldering.
+//! - `PC3` (ADC1_IN13, Pin 18): Available on MCU pin for direct wire soldering.
+//! - `PC4` (ADC1_IN14, Pin 33): Available on MCU pin for direct wire soldering.
+//! - `PC5` (ADC1_IN15, Pin 34): Available on MCU pin for direct wire soldering.
+//!
+//! To expand the ADC scan sequence to 15 channels (adding PC1..PC4 or PC5), configure
+//! `GPIOC_MODER` bits for pins 1..5 as analog mode (`0b11`), adjust `ADC1_CHSELR` mask
+//! from `0x07FF` (channels 0..10) to `0xFFFF` (channels 0..15), and expand `NUM_CHANNELS`.
 
 use core::ptr;
 

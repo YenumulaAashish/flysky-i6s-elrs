@@ -156,6 +156,12 @@ pub fn is_switch_active(condition: u8, switches: &Switches) -> bool {
         16 => switches.sg == SwitchPos::Down,
         17 => switches.sh == SwitchPos::Up,
         18 => switches.sh == SwitchPos::Down,
+        19 => switches.swi == SwitchPos::Up,
+        20 => switches.swi == SwitchPos::Down,
+        21 => switches.swj == SwitchPos::Up,
+        22 => switches.swj == SwitchPos::Down,
+        23 => switches.swk == SwitchPos::Up,
+        24 => switches.swk == SwitchPos::Down,
         _ => true,
     }
 }
@@ -292,6 +298,27 @@ pub fn evaluate_source(
         }
         34 => {
             if switches.sh == SwitchPos::Up {
+                MIXER_MIN as i32
+            } else {
+                MIXER_MAX as i32
+            }
+        }
+        35 => {
+            if switches.swi == SwitchPos::Up {
+                MIXER_MIN as i32
+            } else {
+                MIXER_MAX as i32
+            }
+        }
+        36 => {
+            if switches.swj == SwitchPos::Up {
+                MIXER_MIN as i32
+            } else {
+                MIXER_MAX as i32
+            }
+        }
+        37 => {
+            if switches.swk == SwitchPos::Up {
                 MIXER_MIN as i32
             } else {
                 MIXER_MAX as i32
@@ -537,6 +564,9 @@ mod tests {
             swf: SwitchPos::Down,
             sg: SwitchPos::Up,
             sh: SwitchPos::Down,
+            swi: SwitchPos::Up,
+            swj: SwitchPos::Down,
+            swk: SwitchPos::Up,
         };
 
         assert!(is_switch_active(0, &switches), "Switch 0 is always active");
@@ -558,6 +588,12 @@ mod tests {
         assert!(!is_switch_active(16, &switches), "SG Down");
         assert!(!is_switch_active(17, &switches), "SH Up");
         assert!(is_switch_active(18, &switches), "SH Down");
+        assert!(is_switch_active(19, &switches), "SWI Up");
+        assert!(!is_switch_active(20, &switches), "SWI Down");
+        assert!(!is_switch_active(21, &switches), "SWJ Up");
+        assert!(is_switch_active(22, &switches), "SWJ Down");
+        assert!(is_switch_active(23, &switches), "SWK Up");
+        assert!(!is_switch_active(24, &switches), "SWK Down");
     }
 
     #[test]

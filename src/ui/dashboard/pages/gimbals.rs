@@ -111,7 +111,7 @@ pub fn render(
     }
 
     // Switches & Pots Region (y = 46..53)
-    let has_custom_modes = storage.radio.adc_modes.iter().any(|&m| m != 0);
+    let has_custom_modes = storage.radio.adc_modes.iter().any(|&m| m != 0) || storage.radio.ext_switches_en != 0;
 
     if !has_custom_modes {
         render_default_layout(lcd, state, storage);
@@ -192,8 +192,8 @@ pub fn render_default_layout(lcd: &mut St7567, state: &InputState, storage: &Rad
 /// Render the adaptive switch and pot layout (y = 46..53) based on dynamic channel mappings.
 pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &RadioStorage) {
     let ch_names = ["A", "B", "C", "D", "1", "2"];
-    let mut sw_list: [(&str, crate::input::SwitchPos, bool, u8); 10] =
-        [("", crate::input::SwitchPos::Up, false, 0); 10];
+    let mut sw_list: [(&str, crate::input::SwitchPos, bool, u8); 13] =
+        [("", crate::input::SwitchPos::Up, false, 0); 13];
     let mut sw_count = 0usize;
     let mut pot_vals = [0i16; 6];
     let mut pot_count = 0usize;
@@ -236,22 +236,37 @@ pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &Ra
     }
 
     // Include rear tactile switches E & F
-    if sw_count < 10 {
+    if sw_count < 13 {
         sw_list[sw_count] = ("E", state.switches.swe, false, 0);
         sw_count += 1;
     }
-    if sw_count < 10 {
+    if sw_count < 13 {
         sw_list[sw_count] = ("F", state.switches.swf, false, 0);
         sw_count += 1;
     }
 
     if storage.radio.j4_sg_sh_en != 0 {
-        if sw_count < 10 {
+        if sw_count < 13 {
             sw_list[sw_count] = ("G", state.switches.sg, false, 0);
             sw_count += 1;
         }
-        if sw_count < 10 {
+        if sw_count < 13 {
             sw_list[sw_count] = ("H", state.switches.sh, false, 0);
+            sw_count += 1;
+        }
+    }
+
+    if storage.radio.ext_switches_en != 0 {
+        if sw_count < 13 {
+            sw_list[sw_count] = ("I", state.switches.swi, false, 0);
+            sw_count += 1;
+        }
+        if sw_count < 13 {
+            sw_list[sw_count] = ("J", state.switches.swj, false, 0);
+            sw_count += 1;
+        }
+        if sw_count < 13 {
+            sw_list[sw_count] = ("K", state.switches.swk, false, 0);
             sw_count += 1;
         }
     }

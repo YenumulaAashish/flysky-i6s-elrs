@@ -25,7 +25,7 @@ pub fn update_radio_setup(
         buzzer.click();
         return;
     }
-    const SETUP_ITEMS: usize = 18;
+    const SETUP_ITEMS: usize = 19;
 
     widgets::navigate_4slot_list(
         &mut ctrl.selected_item,
@@ -158,6 +158,20 @@ pub fn update_radio_setup(
                 ctrl.scroll_offset = 0;
                 return;
             }
+            18 => {
+                buzzer.click();
+                storage.radio.ext_switches_en = if storage.radio.ext_switches_en == 0 { 1 } else { 0 };
+                let active_rf = storage.active_model().rf_protocol;
+                let pb6_free = active_rf == 0;
+                let pb7_free = active_rf == 0 || storage.radio.crsf_duplex != 0;
+                let pf10_free = storage.radio.ppm_out_en == 0;
+                crate::boot::init_ext_switches(
+                    storage.radio.ext_switches_en != 0 && pb6_free,
+                    storage.radio.ext_switches_en != 0 && pb7_free,
+                    storage.radio.ext_switches_en != 0 && pf10_free,
+                );
+                storage::save_radio_config(storage);
+            }
             _ => {}
         }
     }
@@ -275,6 +289,10 @@ pub fn update_radio_setup(
             17 => {
                 widgets::draw_list_row_right(lcd, slot, is_sel, "Inputs:", Some("[SETUP]"));
             }
+            18 => {
+                let ext_str = if storage.radio.ext_switches_en != 0 { "ENABLED" } else { "DISABLED" };
+                widgets::draw_list_row_right(lcd, slot, is_sel, "J15 Ext Sw:", Some(ext_str));
+            }
             _ => {}
         }
     }
@@ -292,8 +310,8 @@ pub fn update_input_setup(
 ) {
     if keys.cancel {
         ctrl.state = MenuState::RadioSetup;
-        ctrl.selected_item = 16;
-        ctrl.scroll_offset = 13;
+        ctrl.selected_item = 17;
+        ctrl.scroll_offset = 15;
         buzzer.click();
         return;
     }
@@ -332,6 +350,7 @@ pub fn update_input_setup(
             buzzer.click();
             let current = storage.radio.adc_modes[idx];
             storage.radio.adc_modes[idx] = (current + 1) % 7;
+            crate::input::apply_calibration(&storage.radio);
             storage::save_radio_config(storage);
         }
     }

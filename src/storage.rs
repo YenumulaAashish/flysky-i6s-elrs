@@ -136,7 +136,8 @@ pub struct RadioConfig {
     pub adc_modes: [u8; 6],        // 112..118: Input modes for the 6 auxiliary analog channels
     pub stick_mode: u8,            // 118 (0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4)
     pub switch_beep: u8,           // 119 (0: Off, 1: Enabled audible beep on switch state change)
-    pub _reserved: [u8; 8],        // 120..128 (8 bytes reserved, exact 128-byte guarantee)
+    pub ext_switches_en: u8,       // 120 (0: Disabled, 1: Enabled PB6/PB7 & PF10 as extra GPIO switches)
+    pub _reserved: [u8; 7],        // 121..128 (7 bytes reserved, exact 128-byte guarantee)
 }
 
 impl RadioConfig {
@@ -208,7 +209,8 @@ impl RadioConfig {
             adc_modes: [0; 6],
             stick_mode: 1, // Mode 2 default
             switch_beep: 1, // Default enabled
-            _reserved: [0; 8],
+            ext_switches_en: 0,
+            _reserved: [0; 7],
         }
     }
 }

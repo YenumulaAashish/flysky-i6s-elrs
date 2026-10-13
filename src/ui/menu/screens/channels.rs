@@ -66,7 +66,7 @@ pub fn update_aux_channels(
             buzzer.click();
         }
     } else {
-        const AUX_SOURCES: [u8; 17] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36];
+        const AUX_SOURCES: [u8; 18] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36, 37];
         if let Some(pot) = keys.pot_change {
             storage.models[active_idx].aux_channels[ctrl.selected_item] = pot;
             buzzer.play_tone(2400, 40);
@@ -109,7 +109,7 @@ pub fn update_aux_channels(
         }
         let ch_label = ascii_as_str(&ch_buf);
 
-        let src_idx = (storage.models[active_idx].aux_channels[idx] as usize).min(36);
+        let src_idx = (storage.models[active_idx].aux_channels[idx] as usize).min(37);
         widgets::draw_list_row(lcd, slot, is_sel, ch_label, Some(SOURCE_NAMES[src_idx]), 48);
     }
 

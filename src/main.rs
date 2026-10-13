@@ -117,6 +117,21 @@ impl FlightPipeline {
             state.switches.sh = input::SwitchPos::Up;
         }
 
+        // Update SWI, SWJ, SWK from J15 (PB6, PB7, PF10) if ext_switches_en is set
+        if storage.radio.ext_switches_en != 0 {
+            let pb6_free = active_model.rf_protocol == 0; // AFHDS 2A: PB6 free
+            let pb7_free = active_model.rf_protocol == 0 || storage.radio.crsf_duplex != 0; // AFHDS 2A or CRSF Half-Duplex
+            let pf10_free = storage.radio.ppm_out_en == 0; // PPM-out off
+            let (swi_pressed, swj_pressed, swk_pressed) = boot::read_ext_switches(pb6_free, pb7_free, pf10_free);
+            state.switches.swi = if swi_pressed { input::SwitchPos::Down } else { input::SwitchPos::Up };
+            state.switches.swj = if swj_pressed { input::SwitchPos::Down } else { input::SwitchPos::Up };
+            state.switches.swk = if swk_pressed { input::SwitchPos::Down } else { input::SwitchPos::Up };
+        } else {
+            state.switches.swi = input::SwitchPos::Up;
+            state.switches.swj = input::SwitchPos::Up;
+            state.switches.swk = input::SwitchPos::Up;
+        }
+
         // 2. Resynchronize arm state when active model changes or when exiting settings menu
         if storage.radio.active_model != self.prev_active_model {
             self.prev_active_model = storage.radio.active_model;
@@ -1155,6 +1170,15 @@ fn main() -> ! {
 
     // Initialize PPM output peripheral on PF10 (J15 header)
     rf::ppm_out::init(storage.radio.ppm_out_en != 0);
+
+    // Initialize Extended GPIO switches on J15 (PB6, PB7, PF10) if enabled
+    if storage.radio.ext_switches_en != 0 {
+        let active_rf = storage.active_model().rf_protocol;
+        let pb6_free = active_rf == 0;
+        let pb7_free = active_rf == 0 || storage.radio.crsf_duplex != 0;
+        let pf10_free = storage.radio.ppm_out_en == 0;
+        boot::init_ext_switches(pb6_free, pb7_free, pf10_free);
+    }
 
     let mut trims = trim::TrimController::new();
     trims.throttle_enabled = storage.radio.throttle_trim != 0;
