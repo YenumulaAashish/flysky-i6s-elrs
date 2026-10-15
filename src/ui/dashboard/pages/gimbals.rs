@@ -4,7 +4,7 @@ use crate::input::InputState;
 use crate::storage::{AdcInputMode, RadioStorage};
 use crate::trim::{self, TrimController};
 use crate::ui::format::{format_percent, format_throttle_percent, format_trim};
-use crate::ui::glyphs::draw_switch_arrow;
+use crate::ui::glyphs::{draw_switch_arrow, draw_switch_arrow_compact};
 use crate::ui::widgets;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -279,37 +279,59 @@ pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &Ra
         }
     }
 
-    let (sw_region_w, pot_start_x, pot_w) = if pot_count == 0 {
-        (124i32, 126i32, 0u32)
-    } else if sw_count == 0 {
-        (0i32, 2i32, 124u32)
-    } else {
-        let min_pot_w = match pot_count {
-            1 => 28i32,
-            2 => 36i32,
-            _ => 44i32,
+    let (sw_spacing, compact, pot_start_x, pot_w) = if pot_count == 0 {
+        let spacing = if sw_count <= 1 {
+            124
+        } else {
+            (124 / sw_count as i32).min(14)
         };
-        let max_sw_w = 124i32 - min_pot_w - 4;
-        let desired_sw_w = (sw_count as i32 * 11).min(max_sw_w);
-        let p_start = 2 + desired_sw_w + 4;
-        let p_width = (126 - p_start).max(min_pot_w) as u32;
-        (desired_sw_w, p_start, p_width)
+        (spacing, spacing < 10, 126, 0u32)
+    } else if sw_count == 0 {
+        (0, false, 2, 124u32)
+    } else {
+        let min_pot_w: i32 = match pot_count {
+            1 => 24,
+            2 => if sw_count >= 12 { 24 } else { 28 },
+            _ => 36,
+        };
+
+        // If standard 10px per switch doesn't leave room for min_pot_w + 3px gap, switch to compact
+        let compact = (sw_count as i32 * 10) + min_pot_w + 3 > 124;
+        let slot_w: i32 = if compact { 8 } else { 10 };
+
+        let max_sw_w = 124 - min_pot_w - 3;
+        let natural_sw_w = sw_count as i32 * (if compact { 8 } else { 11 });
+        let actual_sw_w = natural_sw_w.min(max_sw_w).max(sw_count as i32 * (slot_w - 1));
+
+        let spacing = if sw_count <= 1 {
+            actual_sw_w
+        } else {
+            actual_sw_w / sw_count as i32
+        };
+
+        let last_sw_end = 2 + (sw_count as i32 - 1) * spacing + if compact { 7 } else { 10 };
+        let p_start = (last_sw_end + 3).max(2 + actual_sw_w + 3);
+        let p_w = (126 - p_start).max(0) as u32;
+
+        (spacing, compact, p_start, p_w)
     };
 
     if sw_count > 0 {
-        let sw_spacing = if sw_count == 1 {
-            sw_region_w
-        } else {
-            (sw_region_w / sw_count as i32).max(9)
-        };
-
         for (i, &(name, pos, is_6pos, mode_num)) in sw_list.iter().take(sw_count).enumerate() {
             let x = 2 + (i as i32 * sw_spacing);
-            draw_switch_slot(lcd, x, x + 5, name, pos, is_6pos, mode_num);
+            draw_switch_slot(lcd, x, compact, name, pos, is_6pos, mode_num);
         }
     }
 
     if pot_count > 0 && pot_w > 0 {
+        // Vertical divider separating switches from pots
+        if sw_count > 0 {
+            let div_x = pot_start_x - 2;
+            if div_x > 2 && div_x < 126 {
+                lcd.draw_vline(div_x, 46, 8, true);
+            }
+        }
+
         if pot_count == 1 {
             widgets::draw_single_pot_bar(lcd, pot_start_x, 46, pot_w, pot_vals[0]);
         } else if pot_count == 2 {
@@ -322,19 +344,81 @@ pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &Ra
 
 pub fn draw_switch_slot(
     lcd: &mut St7567,
-    text_x: i32,
-    glyph_x: i32,
+    x: i32,
+    compact: bool,
     name: &str,
     pos: crate::input::SwitchPos,
     is_6pos: bool,
     mode_num: u8,
 ) {
-    lcd.draw_str_4x6(text_x + 1, 48, name, false);
+    lcd.draw_str_4x6(x + 1, 48, name, false);
+    let glyph_x = x + 5;
     if is_6pos {
         let num_char = [b'0' + mode_num.clamp(1, 6)];
         let num_str = crate::ui::format::ascii_as_str(&num_char);
-        lcd.draw_str_4x6(glyph_x + 1, 47, num_str, false);
+        lcd.draw_str_4x6(glyph_x, 47, num_str, false);
+    } else if compact {
+        draw_switch_arrow_compact(lcd, glyph_x, 46, pos);
     } else {
         draw_switch_arrow(lcd, glyph_x, 46, pos);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adaptive_layout_no_overlap() {
+        let mut storage = RadioStorage::default_factory();
+        storage.radio.ext_adc_en = 1;
+
+        let state = InputState {
+            gimbals: Default::default(),
+            pots: crate::input::Pots { vr1: 0, vr2: 0 },
+            switches: Default::default(),
+            battery_mv: 4200,
+            aux_pots: [0; 10],
+            raw: [2048; adc::NUM_CHANNELS],
+        };
+
+        // Helper to find the continuous vertical divider column between switches and pots
+        let find_divider = |lcd: &St7567| -> Option<usize> {
+            (40..115).find(|&x| {
+                (46..54).all(|y| lcd.framebuffer()[(y / 8) * 128 + x] & (1 << (y % 8)) != 0)
+            })
+        };
+
+        // 1. Default (6 pots VRA..VRF, 6 switches SA..SF)
+        let mut lcd1 = St7567::new();
+        render_adaptive_layout(&mut lcd1, &state, &storage);
+        let div1 = find_divider(&lcd1);
+        assert!(div1.is_some(), "Divider must separate 6 switches and 6 pots");
+
+        // 2. Extended channels as switches (2 pots, 10 switches)
+        for ch in 6..10 {
+            storage.radio.set_adc_mode_val(ch, 1);
+        }
+        let mut lcd2 = St7567::new();
+        render_adaptive_layout(&mut lcd2, &state, &storage);
+        let div2 = find_divider(&lcd2);
+        assert!(div2.is_some(), "Divider must separate 10 switches and 2 pots");
+
+        // 3. Extended switches + SG/SH (2 pots, 12 switches)
+        storage.radio.j4_sg_sh_en = 1;
+        let mut lcd3 = St7567::new();
+        render_adaptive_layout(&mut lcd3, &state, &storage);
+        let div3 = find_divider(&lcd3);
+        assert!(div3.is_some(), "Divider must separate 12 switches and 2 pots");
+
+        // 4. 6 pots + 8 switches (VRA..VRF + SA..SH)
+        let mut storage4 = RadioStorage::default_factory();
+        storage4.radio.ext_adc_en = 1;
+        storage4.radio.j4_sg_sh_en = 1;
+        let mut lcd4 = St7567::new();
+        render_adaptive_layout(&mut lcd4, &state, &storage4);
+        let div4 = find_divider(&lcd4);
+        assert!(div4.is_some(), "Divider must separate 8 switches and 6 pots");
+    }
+}
+
