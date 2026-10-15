@@ -244,13 +244,11 @@ pub fn evaluate_source(
         4 => cond_sticks[3] as i32, // Yaw
         5 => pots.first().copied().unwrap_or(0) as i32, // VRA
         6 => pots.get(1).copied().unwrap_or(0) as i32,  // VRB
-        7 => {
-            if switches.sa == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
+        7 => match switches.sa {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
         8 => match switches.sb {
             SwitchPos::Up => MIXER_MIN as i32,
             SwitchPos::Mid => MIXER_CENTER as i32,
@@ -261,13 +259,11 @@ pub fn evaluate_source(
             SwitchPos::Mid => MIXER_CENTER as i32,
             SwitchPos::Down => MIXER_MAX as i32,
         },
-        10 => {
-            if switches.sd == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
+        10 => match switches.sd {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
         11 => MIXER_MAX as i32, // MAX
         12..=29 => {
             let ch_idx = (src - 12) as usize;
@@ -277,34 +273,26 @@ pub fn evaluate_source(
             let thr = cond_sticks[2] as i32;
             ((thr + MIXER_MAX as i32) / 2).clamp(0, MIXER_MAX as i32)
         }
-        31 => {
-            if switches.swe == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
-        32 => {
-            if switches.swf == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
-        33 => {
-            if switches.sg == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
-        34 => {
-            if switches.sh == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
+        31 => match switches.swe {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        32 => match switches.swf {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        33 => match switches.sg {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        34 => match switches.sh {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
         35 => match switches.swi {
             SwitchPos::Up => MIXER_MIN as i32,
             SwitchPos::Mid => MIXER_CENTER as i32,
@@ -1032,4 +1020,47 @@ mod tests {
             "Armed model must allow normal throttle output"
         );
     }
+
+    #[test]
+    fn test_switch_evaluation_3pos() {
+        let cond_sticks = [0i16; 4];
+        let pots = [0i16; 6];
+        let channels = [0i32; NUM_CHANNELS];
+
+        let mut switches = Switches::default();
+
+        // SA (source 7)
+        switches.sa = SwitchPos::Up;
+        assert_eq!(evaluate_source(7, &cond_sticks, &pots, &switches, &channels), MIXER_MIN as i32);
+        switches.sa = SwitchPos::Mid;
+        assert_eq!(evaluate_source(7, &cond_sticks, &pots, &switches, &channels), MIXER_CENTER as i32);
+        switches.sa = SwitchPos::Down;
+        assert_eq!(evaluate_source(7, &cond_sticks, &pots, &switches, &channels), MIXER_MAX as i32);
+
+        // SD (source 10)
+        switches.sd = SwitchPos::Up;
+        assert_eq!(evaluate_source(10, &cond_sticks, &pots, &switches, &channels), MIXER_MIN as i32);
+        switches.sd = SwitchPos::Mid;
+        assert_eq!(evaluate_source(10, &cond_sticks, &pots, &switches, &channels), MIXER_CENTER as i32);
+        switches.sd = SwitchPos::Down;
+        assert_eq!(evaluate_source(10, &cond_sticks, &pots, &switches, &channels), MIXER_MAX as i32);
+
+        // Verify end-to-end through compute_channels with SA mapped to CH5 (aux_channels[0] = 7)
+        let mut model = ModelConfig::default_for_index(0);
+        model.aux_channels[0] = 7; // CH5 = SA
+        let trims = TrimController::default();
+
+        switches.sa = SwitchPos::Up;
+        let chs_up = compute_channels(0, 0, 500, 0, &pots, &switches, &model, &trims, 0);
+        assert_eq!(chs_up[4], CHANNEL_MIN_US, "CH5 SA Up -> 988 µs (-100%)");
+
+        switches.sa = SwitchPos::Mid;
+        let chs_mid = compute_channels(0, 0, 500, 0, &pots, &switches, &model, &trims, 0);
+        assert_eq!(chs_mid[4], CHANNEL_CENTER_US, "CH5 SA Mid -> 1500 µs (0%)");
+
+        switches.sa = SwitchPos::Down;
+        let chs_down = compute_channels(0, 0, 500, 0, &pots, &switches, &model, &trims, 0);
+        assert_eq!(chs_down[4], CHANNEL_MAX_US, "CH5 SA Down -> 2012 µs (+100%)");
+    }
 }
+
