@@ -162,6 +162,8 @@ pub fn is_switch_active(condition: u8, switches: &Switches) -> bool {
         22 => switches.swj == SwitchPos::Down,
         23 => switches.swk == SwitchPos::Up,
         24 => switches.swk == SwitchPos::Down,
+        25 => switches.swl == SwitchPos::Up,
+        26 => switches.swl == SwitchPos::Down,
         _ => true,
     }
 }
@@ -230,7 +232,7 @@ pub fn is_timer_active(
 pub fn evaluate_source(
     src: u8,
     cond_sticks: &[i16; 4],
-    pots: &[i16; 2],
+    pots: &[i16],
     switches: &Switches,
     channels: &[i32; NUM_CHANNELS],
 ) -> i32 {
@@ -240,8 +242,8 @@ pub fn evaluate_source(
         2 => cond_sticks[1] as i32, // Pitch
         3 => cond_sticks[2] as i32, // Throttle
         4 => cond_sticks[3] as i32, // Yaw
-        5 => pots[0] as i32,        // VRA
-        6 => pots[1] as i32,        // VRB
+        5 => pots.first().copied().unwrap_or(0) as i32, // VRA
+        6 => pots.get(1).copied().unwrap_or(0) as i32,  // VRB
         7 => {
             if switches.sa == SwitchPos::Up {
                 MIXER_MIN as i32
@@ -303,27 +305,30 @@ pub fn evaluate_source(
                 MIXER_MAX as i32
             }
         }
-        35 => {
-            if switches.swi == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
-        36 => {
-            if switches.swj == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
-        37 => {
-            if switches.swk == SwitchPos::Up {
-                MIXER_MIN as i32
-            } else {
-                MIXER_MAX as i32
-            }
-        }
+        35 => match switches.swi {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        36 => match switches.swj {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        37 => match switches.swk {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        38 => match switches.swl {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        39 => pots.get(2).copied().unwrap_or(0) as i32, // VRC
+        40 => pots.get(3).copied().unwrap_or(0) as i32, // VRD
+        41 => pots.get(4).copied().unwrap_or(0) as i32, // VRE
+        42 => pots.get(5).copied().unwrap_or(0) as i32, // VRF
         _ => MIXER_CENTER as i32,
     }
 }
@@ -335,7 +340,7 @@ pub fn compute_channels(
     raw_pitch: i16,
     curved_throttle: u16, // 0..1000 from throttle curve engine
     raw_yaw: i16,
-    pots: &[i16; 2],
+    pots: &[i16],
     switches: &Switches,
     model: &ModelConfig,
     trims: &TrimController,
@@ -567,6 +572,7 @@ mod tests {
             swi: SwitchPos::Up,
             swj: SwitchPos::Down,
             swk: SwitchPos::Up,
+            swl: SwitchPos::Down,
         };
 
         assert!(is_switch_active(0, &switches), "Switch 0 is always active");
@@ -594,6 +600,8 @@ mod tests {
         assert!(is_switch_active(22, &switches), "SWJ Down");
         assert!(is_switch_active(23, &switches), "SWK Up");
         assert!(!is_switch_active(24, &switches), "SWK Down");
+        assert!(!is_switch_active(25, &switches), "SWL Up");
+        assert!(is_switch_active(26, &switches), "SWL Down");
     }
 
     #[test]

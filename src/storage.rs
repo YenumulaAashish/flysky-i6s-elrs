@@ -88,7 +88,7 @@ impl AdcInputMode {
         matches!(self, Self::PotDetent)
     }
 
-    /// Resolve effective mode for a given channel index (0..3: SA..SD, 4..5: VRA..VRB)
+    /// Resolve effective mode for a given channel index (0..3: SA..SD, 4..5: VRA..VRB, 6..9: VRC..VRF)
     pub fn resolve(channel_idx: usize, mode_val: u8) -> Self {
         let mode = Self::from_u8(mode_val);
         if mode != Self::Default {
@@ -100,7 +100,7 @@ impl AdcInputMode {
             1 => Self::ThreePos, // SB (3-pos stock)
             2 => Self::ThreePos, // SC (3-pos stock)
             3 => Self::TwoPos,   // SD (2-pos stock)
-            _ => Self::Pot,      // VRA, VRB (Pots stock)
+            _ => Self::Pot,      // VRA..VRF (Pots stock)
         }
     }
 }
@@ -136,9 +136,10 @@ pub struct RadioConfig {
     pub adc_modes: [u8; 6],        // 112..118: Input modes for the 6 auxiliary analog channels
     pub stick_mode: u8,            // 118 (0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4)
     pub switch_beep: u8,           // 119 (0: Off, 1: Enabled audible beep on switch state change)
-    pub ext_switches_en: u8,       // 120 (0: Disabled, 1: Enabled PB6/PB7 & PF10 as extra GPIO switches)
+    pub ext_adc_en: u8,            // 120 (0: Disabled, 1: Enabled PC1-PC4 as extended ADC11-ADC14 inputs)
     pub telem_slots: [u8; 4],      // 121..125: Configurable telemetry dashboard sensor slots (1..4)
-    pub _reserved: [u8; 3],        // 125..128 (3 bytes reserved, exact 128-byte guarantee)
+    pub ext_adc_modes: [u8; 2],    // 125..127: Packed input modes for extended channels (VRC/VRD in byte 0, VRE/VRF in byte 1)
+    pub _reserved: [u8; 1],        // 127..128 (1 byte reserved, exact 128-byte guarantee)
 }
 
 impl RadioConfig {
@@ -210,10 +211,42 @@ impl RadioConfig {
             adc_modes: [0; 6],
             stick_mode: 1, // Mode 2 default
             switch_beep: 1, // Default enabled
-            ext_switches_en: 0,
+            ext_adc_en: 0,
             telem_slots: [0, 1, 2, 3], // Default: RxBat, RSSI/LQ, TxBat, Current/Pwr
-            _reserved: [0; 3],
+            ext_adc_modes: [0; 2],
+            _reserved: [0; 1],
         }
+    }
+
+    /// Get configured mode value (0..6) for an aux channel (0..9: SA..SD, VRA..VRB, VRC..VRF)
+    pub fn get_adc_mode_val(&self, ch: usize) -> u8 {
+        if ch < 6 {
+            self.adc_modes[ch]
+        } else if ch < 10 {
+            let byte_idx = (ch - 6) / 2;
+            let shift = ((ch - 6) % 2) * 4;
+            (self.ext_adc_modes[byte_idx] >> shift) & 0x0F
+        } else {
+            0
+        }
+    }
+
+    /// Set configured mode value (0..6) for an aux channel (0..9)
+    pub fn set_adc_mode_val(&mut self, ch: usize, val: u8) {
+        if ch < 6 {
+            self.adc_modes[ch] = val;
+        } else if ch < 10 {
+            let byte_idx = (ch - 6) / 2;
+            let shift = ((ch - 6) % 2) * 4;
+            let mask = !(0x0F << shift);
+            self.ext_adc_modes[byte_idx] =
+                (self.ext_adc_modes[byte_idx] & mask) | ((val & 0x0F) << shift);
+        }
+    }
+
+    /// Get resolved AdcInputMode for an aux channel (0..9)
+    pub fn get_adc_mode(&self, ch: usize) -> AdcInputMode {
+        AdcInputMode::resolve(ch, self.get_adc_mode_val(ch))
     }
 }
 
@@ -435,6 +468,9 @@ impl RadioStorage {
         if self.radio.switch_beep > 1 {
             self.radio.switch_beep = 0;
         }
+        if self.radio.ext_adc_en > 1 {
+            self.radio.ext_adc_en = 0;
+        }
 
         for stick in self.radio.sticks.iter_mut() {
             if stick.min >= stick.center
@@ -460,9 +496,9 @@ impl RadioStorage {
                 aux.max = crate::adc::ADC_MAX;
             }
         }
-        for mode in self.radio.adc_modes.iter_mut() {
-            if *mode > 6 {
-                *mode = 0;
+        for ch in 0..10 {
+            if self.radio.get_adc_mode_val(ch) > 6 {
+                self.radio.set_adc_mode_val(ch, 0);
             }
         }
 
@@ -1385,5 +1421,37 @@ mod tests {
         assert_eq!(pot.min, 100);
         assert_eq!(pot.center, 2000);
         assert_eq!(pot.max, 3900);
+
+        // Test extended channels 6..9 packed mode getters and setters
+        let mut cfg = RadioConfig::default_factory();
+        assert_eq!(core::mem::size_of::<RadioConfig>(), 128);
+
+        // Channels 6..9 default to Pot mode
+        for ch in 6..10 {
+            assert_eq!(cfg.get_adc_mode_val(ch), 0);
+            assert_eq!(cfg.get_adc_mode(ch), AdcInputMode::Pot);
+        }
+
+        // Configure channel 6 (VRC) as 2-pos switch (1), channel 7 (VRD) as 3-pos switch (2)
+        cfg.set_adc_mode_val(6, 1);
+        cfg.set_adc_mode_val(7, 2);
+        assert_eq!(cfg.get_adc_mode_val(6), 1);
+        assert_eq!(cfg.get_adc_mode_val(7), 2);
+        assert_eq!(cfg.get_adc_mode(6), AdcInputMode::TwoPos);
+        assert_eq!(cfg.get_adc_mode(7), AdcInputMode::ThreePos);
+
+        // Verify packed representation in ext_adc_modes[0] = (2 << 4) | 1 = 0x21
+        assert_eq!(cfg.ext_adc_modes[0], 0x21);
+
+        // Configure channel 8 (VRE) as 6-pos switch (3), channel 9 (VRF) as PotDetent (5)
+        cfg.set_adc_mode_val(8, 3);
+        cfg.set_adc_mode_val(9, 5);
+        assert_eq!(cfg.get_adc_mode_val(8), 3);
+        assert_eq!(cfg.get_adc_mode_val(9), 5);
+        assert_eq!(cfg.get_adc_mode(8), AdcInputMode::SixPos);
+        assert_eq!(cfg.get_adc_mode(9), AdcInputMode::PotDetent);
+
+        // Verify packed representation in ext_adc_modes[1] = (5 << 4) | 3 = 0x53
+        assert_eq!(cfg.ext_adc_modes[1], 0x53);
     }
 }

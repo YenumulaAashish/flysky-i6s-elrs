@@ -117,21 +117,6 @@ impl FlightPipeline {
             state.switches.sh = input::SwitchPos::Up;
         }
 
-        // Update SWI, SWJ, SWK from J15 (PB6, PB7, PF10) if ext_switches_en is set
-        if storage.radio.ext_switches_en != 0 {
-            let pb6_free = active_model.rf_protocol == 0; // AFHDS 2A: PB6 free
-            let pb7_free = active_model.rf_protocol == 0 || storage.radio.crsf_duplex != 0; // AFHDS 2A or CRSF Half-Duplex
-            let pf10_free = storage.radio.ppm_out_en == 0; // PPM-out off
-            let (swi_pressed, swj_pressed, swk_pressed) = boot::read_ext_switches(pb6_free, pb7_free, pf10_free);
-            state.switches.swi = if swi_pressed { input::SwitchPos::Down } else { input::SwitchPos::Up };
-            state.switches.swj = if swj_pressed { input::SwitchPos::Down } else { input::SwitchPos::Up };
-            state.switches.swk = if swk_pressed { input::SwitchPos::Down } else { input::SwitchPos::Up };
-        } else {
-            state.switches.swi = input::SwitchPos::Up;
-            state.switches.swj = input::SwitchPos::Up;
-            state.switches.swk = input::SwitchPos::Up;
-        }
-
         // 2. Resynchronize arm state when active model changes or when exiting settings menu
         if storage.radio.active_model != self.prev_active_model {
             self.prev_active_model = storage.radio.active_model;
@@ -179,7 +164,7 @@ impl FlightPipeline {
             controls.elevator,
             thr_curved,
             controls.rudder,
-            &[state.pots.vr1, state.pots.vr2],
+            &state.aux_pots[4..10],
             &state.switches,
             active_model,
             trims,
@@ -244,7 +229,7 @@ impl FlightPipeline {
 /// Background idle and UI context: tracks inactivity, backlight timers, user input, and screen rendering.
 struct BackgroundIdleManager {
     prev_stick_samples: [u16; 6],
-    prev_pots: [i16; 6],
+    prev_pots: [i16; 10],
     prev_instant_trim_active: bool,
     prev_switches: input::Switches,
     prev_bind_key: bool,
@@ -358,8 +343,9 @@ impl BackgroundIdleManager {
         // Pot Center Crossing Audio Feedback for all configured potentiometers (continuous or detented)
         // Detect transitions across deadband ±25 from outside (|prev| >= 25 && |curr| < 25)
         // Disabled while navigating menus to avoid distracting clicks
-        for ch in 0..6 {
-            let mode = storage::AdcInputMode::resolve(ch, storage.radio.adc_modes[ch]);
+        let max_aux = if storage.radio.ext_adc_en != 0 { 10 } else { 6 };
+        for ch in 0..max_aux {
+            let mode = storage.radio.get_adc_mode(ch);
             if mode.is_pot() {
                 let curr = flight.state.aux_pots[ch];
                 let prev = &mut self.prev_pots[ch];
@@ -1113,7 +1099,7 @@ fn main() -> ! {
     watchdog::start();
 
     // 7. Initialize ADC1 + DMA1 autonomous continuous scanner
-    adc::init();
+    adc::init(storage.radio.ext_adc_en != 0);
     watchdog::feed();
     {
         let now = time::millis();
@@ -1170,15 +1156,6 @@ fn main() -> ! {
 
     // Initialize PPM output peripheral on PF10 (J15 header)
     rf::ppm_out::init(storage.radio.ppm_out_en != 0);
-
-    // Initialize Extended GPIO switches on J15 (PB6, PB7, PF10) if enabled
-    if storage.radio.ext_switches_en != 0 {
-        let active_rf = storage.active_model().rf_protocol;
-        let pb6_free = active_rf == 0;
-        let pb7_free = active_rf == 0 || storage.radio.crsf_duplex != 0;
-        let pf10_free = storage.radio.ppm_out_en == 0;
-        boot::init_ext_switches(pb6_free, pb7_free, pf10_free);
-    }
 
     let mut trims = trim::TrimController::new();
     trims.throttle_enabled = storage.radio.throttle_trim != 0;

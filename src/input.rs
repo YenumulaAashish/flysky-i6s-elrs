@@ -99,9 +99,10 @@ pub struct Switches {
     pub swf: SwitchPos, // 2-pos (Rear Right PA10)
     pub sg: SwitchPos,  // 2-pos (J4 PA13 SWDIO when enabled)
     pub sh: SwitchPos,  // 2-pos (J4 PA14 SWCLK when enabled)
-    pub swi: SwitchPos, // 2-pos (PB6 USART1_TX on J15 when enabled)
-    pub swj: SwitchPos, // 2-pos (PB7 USART1_RX on J15 when enabled)
-    pub swk: SwitchPos, // 2-pos (PF10 PPM on J15 when enabled)
+    pub swi: SwitchPos, // 2-pos or 3-pos (PC1 / ADC11 when enabled)
+    pub swj: SwitchPos, // 2-pos or 3-pos (PC2 / ADC12 when enabled)
+    pub swk: SwitchPos, // 2-pos or 3-pos (PC3 / ADC13 when enabled)
+    pub swl: SwitchPos, // 2-pos or 3-pos (PC4 / ADC14 when enabled)
 }
 
 impl Switches {
@@ -118,10 +119,11 @@ impl Switches {
             swi: SwitchPos::Up,
             swj: SwitchPos::Up,
             swk: SwitchPos::Up,
+            swl: SwitchPos::Up,
         }
     }
 
-    /// Detect if a switch moved between prev and self, returning the matching condition index 1..24.
+    /// Detect if a switch moved between prev and self, returning the matching condition index 1..26.
     pub fn detect_condition_change(&self, prev: &Switches) -> Option<u8> {
         if self.sa != prev.sa {
             return Some(if self.sa == SwitchPos::Up { 1 } else { 2 });
@@ -164,6 +166,9 @@ impl Switches {
         if self.swk != prev.swk {
             return Some(if self.swk == SwitchPos::Up { 23 } else { 24 });
         }
+        if self.swl != prev.swl {
+            return Some(if self.swl == SwitchPos::Up { 25 } else { 26 });
+        }
         None
     }
 
@@ -191,7 +196,7 @@ pub struct InputState {
     pub pots: Pots,
     pub switches: Switches,
     pub battery_mv: u16,
-    pub aux_pots: [i16; 6],
+    pub aux_pots: [i16; 10],
     #[allow(dead_code)]
     pub raw: [u16; adc::NUM_CHANNELS],
 }
@@ -307,8 +312,9 @@ pub struct InputCalibration {
     pub rv: AxisCalib, // PA1: Right Vertical
     pub lv: AxisCalib, // PA2: Left Vertical
     pub lh: AxisCalib, // PA3: Left Horizontal
-    pub aux: [AxisCalib; 6], // 0..3: SA..SD, 4..5: VRA..VRB
-    pub adc_modes: [u8; 6],
+    pub aux: [AxisCalib; 10], // 0..3: SA..SD, 4..5: VRA..VRB, 6..9: VRC..VRF (PC1..PC4)
+    pub adc_modes: [u8; 10],
+    pub ext_adc_en: bool,
     pub filtered_battery_mv: u32,
 }
 
@@ -326,8 +332,13 @@ impl InputCalibration {
                 AxisCalib::new(ADC_MIN, ADC_CENTER, ADC_MAX, false), // SD (PB1)
                 AxisCalib::new(ADC_MIN, ADC_CENTER, ADC_MAX, false), // VRA (PA6)
                 AxisCalib::new(ADC_MIN, ADC_CENTER, ADC_MAX, false), // VRB (PA7)
+                AxisCalib::new(ADC_MIN, ADC_CENTER, ADC_MAX, false), // VRC (PC1)
+                AxisCalib::new(ADC_MIN, ADC_CENTER, ADC_MAX, false), // VRD (PC2)
+                AxisCalib::new(ADC_MIN, ADC_CENTER, ADC_MAX, false), // VRE (PC3)
+                AxisCalib::new(ADC_MIN, ADC_CENTER, ADC_MAX, false), // VRF (PC4)
             ],
-            adc_modes: [0; 6],
+            adc_modes: [0; 10],
+            ext_adc_en: false,
             filtered_battery_mv: 0,
         }
     }
@@ -344,7 +355,10 @@ static INPUT_MANAGER: InputManagerCell = InputManagerCell(UnsafeCell::new(InputC
 pub fn apply_calibration(config: &RadioConfig) {
     let calib = unsafe { &mut *INPUT_MANAGER.0.get() };
 
-    calib.adc_modes = config.adc_modes;
+    calib.ext_adc_en = config.ext_adc_en != 0;
+    for i in 0..10 {
+        calib.adc_modes[i] = config.get_adc_mode_val(i);
+    }
 
     // Physical Gimbals: PA0 (RH), PA1 (RV), PA2 (LV), PA3 (LH)
     // RH: PA0
@@ -387,6 +401,14 @@ pub fn apply_calibration(config: &RadioConfig) {
                 ((config.aux_pots[i].min as u32 + config.aux_pots[i].max as u32) / 2) as u16;
         }
     }
+
+    // 4 Extended Analog Channels (VRC..VRF on PC1..PC4)
+    for i in 6..10 {
+        calib.aux[i].invert = false;
+        calib.aux[i].min = ADC_MIN;
+        calib.aux[i].center = ADC_CENTER;
+        calib.aux[i].max = ADC_MAX;
+    }
 }
 
 /// Map raw analog reading to a 6-position flight mode index (1..6).
@@ -426,16 +448,20 @@ pub fn decode_switch_2pos(raw: u16) -> SwitchPos {
     }
 }
 
-/// Map an aux channel index (0..5) to raw ADC channel index on FS-i6S.
+/// Map an aux channel index (0..9) to raw ADC channel index on FS-i6S.
 #[inline(always)]
 pub fn aux_index_to_raw_adc(ch: usize) -> usize {
     match ch {
-        0 => 4, // SA: PA4
-        1 => 5, // SB: PA5
-        2 => 8, // SC: PB0 (swapped on i6S)
-        3 => 9, // SD: PB1
-        4 => 6, // VRA: PA6
-        5 => 7, // VRB: PA7 (swapped on i6S)
+        0 => 4,  // SA: PA4
+        1 => 5,  // SB: PA5
+        2 => 8,  // SC: PB0 (swapped on i6S)
+        3 => 9,  // SD: PB1
+        4 => 6,  // VRA: PA6
+        5 => 7,  // VRB: PA7 (swapped on i6S)
+        6 => 11, // VRC / SWI: PC1 (ADC11)
+        7 => 12, // VRD / SWJ: PC2 (ADC12)
+        8 => 13, // VRE / SWK: PC3 (ADC13)
+        9 => 14, // VRF / SWL: PC4 (ADC14)
         _ => 4,
     }
 }
@@ -504,9 +530,10 @@ pub fn poll() -> InputState {
         lh: calib.lh.normalize(raw[3]),
     };
 
-    // Process auxiliary analog channels (0..5)
-    let mut aux_pots = [0i16; 6];
-    for i in 0..6 {
+    // Process auxiliary analog channels (0..5 standard, 6..9 extended PC1..PC4)
+    let max_aux = if calib.ext_adc_en { 10 } else { 6 };
+    let mut aux_pots = [0i16; 10];
+    for i in 0..max_aux {
         let raw_val = raw[aux_index_to_raw_adc(i)];
         let mode = AdcInputMode::resolve(i, calib.adc_modes[i]);
 
@@ -560,6 +587,32 @@ pub fn poll() -> InputState {
         _ => decode_switch_2pos(raw[9]),
     };
 
+    let (swi, swj, swk, swl) = if calib.ext_adc_en {
+        let swi = match AdcInputMode::resolve(6, calib.adc_modes[6]) {
+            AdcInputMode::ThreePos => decode_switch_3pos(raw[11]),
+            AdcInputMode::TwoPos => decode_switch_2pos(raw[11]),
+            _ => SwitchPos::Up,
+        };
+        let swj = match AdcInputMode::resolve(7, calib.adc_modes[7]) {
+            AdcInputMode::ThreePos => decode_switch_3pos(raw[12]),
+            AdcInputMode::TwoPos => decode_switch_2pos(raw[12]),
+            _ => SwitchPos::Up,
+        };
+        let swk = match AdcInputMode::resolve(8, calib.adc_modes[8]) {
+            AdcInputMode::ThreePos => decode_switch_3pos(raw[13]),
+            AdcInputMode::TwoPos => decode_switch_2pos(raw[13]),
+            _ => SwitchPos::Up,
+        };
+        let swl = match AdcInputMode::resolve(9, calib.adc_modes[9]) {
+            AdcInputMode::ThreePos => decode_switch_3pos(raw[14]),
+            AdcInputMode::TwoPos => decode_switch_2pos(raw[14]),
+            _ => SwitchPos::Up,
+        };
+        (swi, swj, swk, swl)
+    } else {
+        (SwitchPos::Up, SwitchPos::Up, SwitchPos::Up, SwitchPos::Up)
+    };
+
     let switches = Switches {
         sa,
         sb,
@@ -569,9 +622,10 @@ pub fn poll() -> InputState {
         swf: SwitchPos::Up,
         sg: SwitchPos::Up,
         sh: SwitchPos::Up,
-        swi: SwitchPos::Up,
-        swj: SwitchPos::Up,
-        swk: SwitchPos::Up,
+        swi,
+        swj,
+        swk,
+        swl,
     };
 
     let instant_mv = calculate_battery_mv(raw[10]); // PC0
@@ -640,5 +694,70 @@ mod tests {
         assert_eq!(decode_switch_6pos_num(2400), 4);
         assert_eq!(decode_switch_6pos_num(3100), 5);
         assert_eq!(decode_switch_6pos_num(3800), 6);
+    }
+
+    #[test]
+    fn test_aux_index_to_raw_adc_mapping() {
+        assert_eq!(aux_index_to_raw_adc(0), 4);  // SA: PA4
+        assert_eq!(aux_index_to_raw_adc(1), 5);  // SB: PA5
+        assert_eq!(aux_index_to_raw_adc(2), 8);  // SC: PB0
+        assert_eq!(aux_index_to_raw_adc(3), 9);  // SD: PB1
+        assert_eq!(aux_index_to_raw_adc(4), 6);  // VRA: PA6
+        assert_eq!(aux_index_to_raw_adc(5), 7);  // VRB: PA7
+        assert_eq!(aux_index_to_raw_adc(6), 11); // VRC / SWI: PC1 (ADC11)
+        assert_eq!(aux_index_to_raw_adc(7), 12); // VRD / SWJ: PC2 (ADC12)
+        assert_eq!(aux_index_to_raw_adc(8), 13); // VRE / SWK: PC3 (ADC13)
+        assert_eq!(aux_index_to_raw_adc(9), 14); // VRF / SWL: PC4 (ADC14)
+    }
+
+    #[test]
+    fn test_swl_switch_condition_change() {
+        let mut prev = Switches::new();
+        let mut curr = Switches::new();
+
+        // Initially both Up
+        assert_eq!(curr.detect_condition_change(&prev), None);
+
+        // SWL toggled to Down -> condition 26
+        curr.swl = SwitchPos::Down;
+        assert_eq!(curr.detect_condition_change(&prev), Some(26));
+
+        // SWL toggled back to Up -> condition 25
+        prev.swl = SwitchPos::Down;
+        curr.swl = SwitchPos::Up;
+        assert_eq!(curr.detect_condition_change(&prev), Some(25));
+    }
+
+    #[test]
+    fn test_extended_adc_poll() {
+        let mut cfg = RadioConfig::default_factory();
+        cfg.ext_adc_en = 1;
+        // ch 6 (VRC / PC1): 2-pos switch (mode 1)
+        // ch 7 (VRD / PC2): 3-pos switch (mode 2)
+        // ch 8 (VRE / PC3): 6-pos switch (mode 3)
+        // ch 9 (VRF / PC4): pot (mode 4)
+        cfg.set_adc_mode_val(6, 1);
+        cfg.set_adc_mode_val(7, 2);
+        cfg.set_adc_mode_val(8, 3);
+        cfg.set_adc_mode_val(9, 4);
+
+        apply_calibration(&cfg);
+
+        // Mock ADC readings
+        let mut mock_adc = [2048u16; crate::adc::NUM_CHANNELS];
+        mock_adc[11] = 3500; // PC1 (ch6): high count -> 2-pos switch Down
+        mock_adc[12] = 2048; // PC2 (ch7): center count -> 3-pos switch Mid
+        mock_adc[13] = 2500; // PC3 (ch8): count 2500 -> 6-pos switch step 4
+        mock_adc[14] = 4095; // PC4 (ch9): max count -> Pot +1000
+
+        crate::adc::set_test_adc_snapshot(mock_adc);
+
+        let state = poll();
+        assert_eq!(state.switches.swi, SwitchPos::Down);
+        assert_eq!(state.switches.swj, SwitchPos::Mid);
+        // aux_pots[8] for 6-pos step 4 = -1000 + (3 * 400) = 200
+        assert_eq!(state.aux_pots[8], 200);
+        // aux_pots[9] for pot at 4095 = 1000
+        assert_eq!(state.aux_pots[9], 1000);
     }
 }

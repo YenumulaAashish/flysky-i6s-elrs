@@ -66,7 +66,9 @@ pub fn update_aux_channels(
             buzzer.click();
         }
     } else {
-        const AUX_SOURCES: [u8; 18] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36, 37];
+        const AUX_SOURCES: [u8; 23] = [
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
+        ];
         if let Some(pot) = keys.pot_change {
             storage.models[active_idx].aux_channels[ctrl.selected_item] = pot;
             buzzer.play_tone(2400, 40);

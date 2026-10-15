@@ -111,7 +111,7 @@ pub fn render(
     }
 
     // Switches & Pots Region (y = 46..53)
-    let has_custom_modes = storage.radio.adc_modes.iter().any(|&m| m != 0) || storage.radio.ext_switches_en != 0;
+    let has_custom_modes = storage.radio.adc_modes.iter().any(|&m| m != 0) || storage.radio.ext_adc_en != 0;
 
     if !has_custom_modes {
         render_default_layout(lcd, state, storage);
@@ -191,15 +191,28 @@ pub fn render_default_layout(lcd: &mut St7567, state: &InputState, storage: &Rad
 
 /// Render the adaptive switch and pot layout (y = 46..53) based on dynamic channel mappings.
 pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &RadioStorage) {
-    let ch_names = ["A", "B", "C", "D", "1", "2"];
-    let mut sw_list: [(&str, crate::input::SwitchPos, bool, u8); 13] =
-        [("", crate::input::SwitchPos::Up, false, 0); 13];
+    let max_aux = if storage.radio.ext_adc_en != 0 { 10 } else { 6 };
+    let mut sw_list: [(&str, crate::input::SwitchPos, bool, u8); 16] =
+        [("", crate::input::SwitchPos::Up, false, 0); 16];
     let mut sw_count = 0usize;
     let mut pot_vals = [0i16; 6];
     let mut pot_count = 0usize;
 
-    for (ch, &name) in ch_names.iter().enumerate() {
-        let mode = AdcInputMode::resolve(ch, storage.radio.adc_modes[ch]);
+    for ch in 0..max_aux {
+        let mode = storage.radio.get_adc_mode(ch);
+        let sw_name = match ch {
+            0 => "A",
+            1 => "B",
+            2 => "C",
+            3 => "D",
+            4 => "1",
+            5 => "2",
+            6 => "I",
+            7 => "J",
+            8 => "K",
+            9 => "L",
+            _ => "?",
+        };
         match mode {
             AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim => {
                 let pos = match ch {
@@ -207,6 +220,10 @@ pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &Ra
                     1 => state.switches.sb,
                     2 => state.switches.sc,
                     3 => state.switches.sd,
+                    6 => state.switches.swi,
+                    7 => state.switches.swj,
+                    8 => state.switches.swk,
+                    9 => state.switches.swl,
                     _ => {
                         let p = state.aux_pots[ch];
                         if p < -333 {
@@ -218,55 +235,46 @@ pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &Ra
                         }
                     }
                 };
-                sw_list[sw_count] = (name, pos, false, 0);
-                sw_count += 1;
+                if sw_count < sw_list.len() {
+                    sw_list[sw_count] = (sw_name, pos, false, 0);
+                    sw_count += 1;
+                }
             }
             AdcInputMode::SixPos => {
                 let raw_ch = aux_channel_raw_adc(&state.raw, ch);
                 let mode_num = crate::input::decode_switch_6pos_num(raw_ch);
-                sw_list[sw_count] = (name, crate::input::SwitchPos::Mid, true, mode_num);
-                sw_count += 1;
+                if sw_count < sw_list.len() {
+                    sw_list[sw_count] = (sw_name, crate::input::SwitchPos::Mid, true, mode_num);
+                    sw_count += 1;
+                }
             }
             AdcInputMode::Pot | AdcInputMode::PotDetent => {
-                pot_vals[pot_count] = state.aux_pots[ch];
-                pot_count += 1;
+                if pot_count < pot_vals.len() {
+                    pot_vals[pot_count] = state.aux_pots[ch];
+                    pot_count += 1;
+                }
             }
             AdcInputMode::Default => unreachable!(),
         }
     }
 
     // Include rear tactile switches E & F
-    if sw_count < 13 {
+    if sw_count < sw_list.len() {
         sw_list[sw_count] = ("E", state.switches.swe, false, 0);
         sw_count += 1;
     }
-    if sw_count < 13 {
+    if sw_count < sw_list.len() {
         sw_list[sw_count] = ("F", state.switches.swf, false, 0);
         sw_count += 1;
     }
 
     if storage.radio.j4_sg_sh_en != 0 {
-        if sw_count < 13 {
+        if sw_count < sw_list.len() {
             sw_list[sw_count] = ("G", state.switches.sg, false, 0);
             sw_count += 1;
         }
-        if sw_count < 13 {
+        if sw_count < sw_list.len() {
             sw_list[sw_count] = ("H", state.switches.sh, false, 0);
-            sw_count += 1;
-        }
-    }
-
-    if storage.radio.ext_switches_en != 0 {
-        if sw_count < 13 {
-            sw_list[sw_count] = ("I", state.switches.swi, false, 0);
-            sw_count += 1;
-        }
-        if sw_count < 13 {
-            sw_list[sw_count] = ("J", state.switches.swj, false, 0);
-            sw_count += 1;
-        }
-        if sw_count < 13 {
-            sw_list[sw_count] = ("K", state.switches.swk, false, 0);
             sw_count += 1;
         }
     }

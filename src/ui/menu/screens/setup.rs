@@ -160,16 +160,9 @@ pub fn update_radio_setup(
             }
             18 => {
                 buzzer.click();
-                storage.radio.ext_switches_en = if storage.radio.ext_switches_en == 0 { 1 } else { 0 };
-                let active_rf = storage.active_model().rf_protocol;
-                let pb6_free = active_rf == 0;
-                let pb7_free = active_rf == 0 || storage.radio.crsf_duplex != 0;
-                let pf10_free = storage.radio.ppm_out_en == 0;
-                crate::boot::init_ext_switches(
-                    storage.radio.ext_switches_en != 0 && pb6_free,
-                    storage.radio.ext_switches_en != 0 && pb7_free,
-                    storage.radio.ext_switches_en != 0 && pf10_free,
-                );
+                storage.radio.ext_adc_en = if storage.radio.ext_adc_en == 0 { 1 } else { 0 };
+                crate::adc::set_ext_adc_enabled(storage.radio.ext_adc_en != 0);
+                crate::input::apply_calibration(&storage.radio);
                 storage::save_radio_config(storage);
             }
             19 => {
@@ -297,8 +290,8 @@ pub fn update_radio_setup(
                 widgets::draw_list_row_right(lcd, slot, is_sel, "Inputs:", Some("[SETUP]"));
             }
             18 => {
-                let ext_str = if storage.radio.ext_switches_en != 0 { "ENABLED" } else { "DISABLED" };
-                widgets::draw_list_row_right(lcd, slot, is_sel, "J15 Ext Sw:", Some(ext_str));
+                let ext_str = if storage.radio.ext_adc_en != 0 { "ENABLED" } else { "DISABLED" };
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Ext ADC (PC):", Some(ext_str));
             }
             19 => {
                 widgets::draw_list_row_right(lcd, slot, is_sel, "Telem Page:", Some("[SETUP]"));
@@ -326,14 +319,18 @@ pub fn update_input_setup(
         return;
     }
 
-    const INPUT_ITEMS: usize = 6;
-    const AUX_NAMES: [&str; 6] = [
+    let input_items = if storage.radio.ext_adc_en != 0 { 10 } else { 6 };
+    const AUX_NAMES: [&str; 10] = [
         "SA (PA4):",
         "SB (PA5):",
         "SC (PB0):",
         "SD (PB1):",
         "VRA (PA6):",
         "VRB (PA7):",
+        "VRC (PC1):",
+        "VRD (PC2):",
+        "VRE (PC3):",
+        "VRF (PC4):",
     ];
     const MODE_STRS: [&str; 7] = [
         "DEFAULT",
@@ -348,7 +345,7 @@ pub fn update_input_setup(
     widgets::navigate_4slot_list(
         &mut ctrl.selected_item,
         &mut ctrl.scroll_offset,
-        INPUT_ITEMS,
+        input_items,
         keys.up,
         keys.down,
         buzzer,
@@ -356,10 +353,10 @@ pub fn update_input_setup(
 
     if keys.ok {
         let idx = ctrl.selected_item;
-        if idx < INPUT_ITEMS {
+        if idx < input_items {
             buzzer.click();
-            let current = storage.radio.adc_modes[idx];
-            storage.radio.adc_modes[idx] = (current + 1) % 7;
+            let current = storage.radio.get_adc_mode_val(idx);
+            storage.radio.set_adc_mode_val(idx, (current + 1) % 7);
             crate::input::apply_calibration(&storage.radio);
             storage::save_radio_config(storage);
         }
@@ -369,11 +366,11 @@ pub fn update_input_setup(
 
     for slot in 0..4 {
         let idx = ctrl.scroll_offset + slot;
-        if idx >= INPUT_ITEMS {
+        if idx >= input_items {
             break;
         }
         let is_sel = idx == ctrl.selected_item;
-        let mode_val = storage.radio.adc_modes[idx] as usize;
+        let mode_val = storage.radio.get_adc_mode_val(idx) as usize;
         let mode_str = if mode_val < MODE_STRS.len() {
             MODE_STRS[mode_val]
         } else {

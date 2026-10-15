@@ -114,15 +114,17 @@ pub fn prev_ascii(c: u8) -> u8 {
     }
 }
 
-pub const SOURCE_NAMES: [&str; 38] = [
+pub const SOURCE_NAMES: [&str; 43] = [
     "None", "Roll", "Pitch", "Thr", "Yaw", "VRA", "VRB", "SA", "SB", "SC", "SD", "MAX", "CH1",
     "CH2", "CH3", "CH4", "CH5", "CH6", "CH7", "CH8", "CH9", "CH10", "CH11", "CH12", "CH13", "CH14",
-    "CH15", "CH16", "CH17", "CH18", "Thr+", "SWE", "SWF", "SG", "SH", "SWI", "SWJ", "SWK",
+    "CH15", "CH16", "CH17", "CH18", "Thr+", "SWE", "SWF", "SG", "SH", "SWI", "SWJ", "SWK", "SWL",
+    "VRC", "VRD", "VRE", "VRF",
 ];
 
-pub const SWITCH_COND_NAMES: [&str; 25] = [
+pub const SWITCH_COND_NAMES: [&str; 27] = [
     "ON", "SA^", "SAv", "SB^", "SB-", "SBv", "SC^", "SC-", "SCv", "SD^", "SDv", "SWE^", "SWEv",
     "SWF^", "SWFv", "SG^", "SGv", "SH^", "SHv", "SWI^", "SWIv", "SWJ^", "SWJv", "SWK^", "SWKv",
+    "SWL^", "SWLv",
 ];
 
 pub const MODE_NAMES: [&str; 3] = ["ADD (+)", "MULT (*)", "REPL (:=)"];
