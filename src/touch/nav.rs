@@ -57,6 +57,7 @@ pub struct SwipeTracker {
     pub swiped: bool,
     pub last_packet_ms: u32,
     pub last_scroll_ms: u32,
+    pub last_move_ms: u32,
 }
 
 impl SwipeTracker {
@@ -73,6 +74,7 @@ impl SwipeTracker {
         self.active = true;
         self.swiped = false;
         self.last_scroll_ms = 0;
+        self.last_move_ms = 0;
     }
 
     #[inline(always)]
@@ -81,6 +83,7 @@ impl SwipeTracker {
         self.swiped = false;
         self.scroll_dir = 0;
         self.last_scroll_ms = 0;
+        self.last_move_ms = 0;
     }
 }
 
@@ -97,6 +100,7 @@ static mut GLOBAL_SWIPE_TRACKER: SwipeTracker = SwipeTracker {
     swiped: false,
     last_packet_ms: 0,
     last_scroll_ms: 0,
+    last_move_ms: 0,
 };
 
 /// Evaluates a valid touch sample and screen tap zones into UI navigation key flags.
@@ -152,6 +156,18 @@ pub fn touch_to_nav_keys_with_tracker(
                     #[cfg(test)]
                     let now: u32 = 0;
 
+                    // Motion vs stationary detection:
+                    // If finger movement is within ±1 pixel, accumulate stationary hold time.
+                    // If stationary for >= 100 ms, settle anchor to current position so lifting
+                    // finger off the screen cannot cause accidental scroll overshoot!
+                    if (pt.y as i16 - tracker.last_y as i16).abs() >= 2 {
+                        tracker.last_move_ms = now.max(1);
+                    } else if tracker.last_move_ms != 0 && now.wrapping_sub(tracker.last_move_ms) >= 100 {
+                        tracker.anchor_y = pt.y;
+                        tracker.max_y = pt.y;
+                        tracker.min_y = pt.y;
+                    }
+
                     // 1. Peak & Turning point tracking for instant directional reversal
                     if pt.y > tracker.max_y {
                         tracker.max_y = pt.y;
@@ -160,15 +176,15 @@ pub fn touch_to_nav_keys_with_tracker(
                         tracker.min_y = pt.y;
                     }
 
-                    // Deliberate direction reversal detection (>= 3px movement opposite to prior motion):
+                    // Deliberate direction reversal detection (>= 4px movement opposite to prior motion):
                     // If moving/scrolled DOWN and finger moves UP:
-                    if tracker.scroll_dir >= 0 && pt.y <= tracker.max_y.saturating_sub(3) {
+                    if tracker.scroll_dir > 0 && pt.y <= tracker.max_y.saturating_sub(4) {
                         tracker.anchor_y = tracker.max_y;
                         tracker.min_y = pt.y;
                         tracker.scroll_dir = 0;
                     }
                     // If moving/scrolled UP and finger moves DOWN:
-                    else if tracker.scroll_dir <= 0 && pt.y >= tracker.min_y.saturating_add(3) {
+                    else if tracker.scroll_dir < 0 && pt.y >= tracker.min_y.saturating_add(4) {
                         tracker.anchor_y = tracker.min_y;
                         tracker.max_y = pt.y;
                         tracker.scroll_dir = 0;
@@ -193,6 +209,7 @@ pub fn touch_to_nav_keys_with_tracker(
                             tracker.min_y = pt.y;
                             tracker.scroll_dir = -1;
                             tracker.last_scroll_ms = now.max(1);
+                            tracker.last_move_ms = now.max(1);
                             tracker.swiped = true;
                         }
                     } else if dy >= 12 {
@@ -204,6 +221,7 @@ pub fn touch_to_nav_keys_with_tracker(
                             tracker.min_y = pt.y;
                             tracker.scroll_dir = 1;
                             tracker.last_scroll_ms = now.max(1);
+                            tracker.last_move_ms = now.max(1);
                             tracker.swiped = true;
                         }
                     }
@@ -811,5 +829,52 @@ mod tests {
         };
         assert_eq!(touch_to_nav_keys_with_tracker(&s_swipe_left, false, &mut tracker), KEY_NAV_DOWN);
         assert!(tracker.swiped);
+    }
+
+    #[test]
+    fn test_menu_touch_stationary_hold_and_liftup_stability() {
+        let mut tracker = SwipeTracker::default();
+
+        // 1. Press at y = 30
+        let s_press = TouchSample {
+            gesture: Gesture::None,
+            point: Some(TouchPoint {
+                x: 60,
+                y: 30,
+                raw_x: 60,
+                raw_y: 120,
+                event: TouchEventKind::PressDown,
+            }),
+        };
+        assert_eq!(touch_to_nav_keys_with_tracker(&s_press, true, &mut tracker), 0);
+
+        // 2. Drag down by 12 px (to y = 42) -> fires KEY_NAV_DOWN
+        let s_drag = TouchSample {
+            gesture: Gesture::None,
+            point: Some(TouchPoint {
+                x: 60,
+                y: 42,
+                raw_x: 84,
+                raw_y: 120,
+                event: TouchEventKind::Contact,
+            }),
+        };
+        assert_eq!(touch_to_nav_keys_with_tracker(&s_drag, true, &mut tracker), KEY_NAV_DOWN);
+        assert_eq!(tracker.anchor_y, 42);
+
+        // 3. User settles on line at y = 44 (2px drift) and lifts finger
+        // On LiftUp, no further scroll keys must be emitted!
+        let s_lift = TouchSample {
+            gesture: Gesture::None,
+            point: Some(TouchPoint {
+                x: 60,
+                y: 45, // slight 3px tremor on lift
+                raw_x: 90,
+                raw_y: 120,
+                event: TouchEventKind::LiftUp,
+            }),
+        };
+        assert_eq!(touch_to_nav_keys_with_tracker(&s_lift, true, &mut tracker), 0);
+        assert!(!tracker.active);
     }
 }

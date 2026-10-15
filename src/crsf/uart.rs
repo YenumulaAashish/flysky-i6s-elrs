@@ -171,7 +171,7 @@ pub fn get_brr_for_baud(baud_idx: u8) -> u32 {
         1 => 115, // 416,666 bps (48,000,000 / 416,666.67 = 115.20)
         2 => 417, // 115,200 bps (48,000,000 / 115,200 = 416.66)
         3 => 52,  // 921,600 bps (48,000,000 / 921,600 = 52.08)
-        4 => (25 & 0xFFF0) | ((25 & 0x000F) >> 1), // 1,875,000 bps with OVER8: 2 * 48,000,000 / 1,875,000 = 51.2 -> BRR 25.6 ~ 26 (0x1A -> mantissa 1, frac 5)
+        4 => 51,  // 1,870,000 bps (2 * 48,000,000 / 1,870,000 = 51.33 ~ 51)
         _ => 114,
     }
 }
@@ -233,13 +233,7 @@ pub fn set_uart_enabled(enabled: bool, baud_idx: u8, half_duplex: bool) {
             // 5. Set Baud rate divisor and oversampling mode
             // For 1.875 MBaud (baud_idx == 4), OVER8 (bit 15 of CR1) provides double oversampling accuracy
             let over8 = if baud_idx == 4 { 1 << 15 } else { 0 };
-            let brr = if baud_idx == 4 {
-                // 48 MHz / 1.875 MHz = 25.6. With OVER8, USARTDIV = 25.6 -> BRR[15:4] = 25 / 16 = 1, BRR[2:0] = round(0.6 * 8) = 5
-                // Formula: (25 << 4) | (5 & 0x07) with bit 3 = 0, giving 0x00195 or standard BRR = 26
-                26
-            } else {
-                get_brr_for_baud(baud_idx)
-            };
+            let brr = get_brr_for_baud(baud_idx);
             ptr::write_volatile(USART1_BRR, brr);
 
             // Clear any pending error flags

@@ -253,7 +253,7 @@ pub fn update_radio_setup(
             }
             10 => {
                 let dup_str = if storage.radio.crsf_duplex != 0 { "HALF (PB6)" } else { "FULL (PB6/7)" };
-                widgets::draw_list_row_right(lcd, slot, is_sel, "CRSF Bay:", Some(dup_str));
+                widgets::draw_list_row_right(lcd, slot, is_sel, "CRSF:", Some(dup_str));
             }
             11 => {
                 let ppm_str = if storage.radio.ppm_out_en != 0 { "ENABLED" } else { "OFF" };
@@ -265,7 +265,7 @@ pub fn update_radio_setup(
                     2 => "TRIMS MOD",
                     _ => "RC SW (SWE)",
                 };
-                widgets::draw_list_row_right(lcd, slot, is_sel, "Rear L Key:", Some(left_str));
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Rear L:", Some(left_str));
             }
             13 => {
                 let right_str = match storage.radio.rear_right_func {
@@ -273,11 +273,11 @@ pub fn update_radio_setup(
                     2 => "TRIMS MOD",
                     _ => "RC SW (SWF)",
                 };
-                widgets::draw_list_row_right(lcd, slot, is_sel, "Rear R Key:", Some(right_str));
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Rear R:", Some(right_str));
             }
             14 => {
                 let touch_str = if storage.radio.touch_disabled == 0 { "ENABLED" } else { "DISABLED" };
-                widgets::draw_list_row_right(lcd, slot, is_sel, "Touch Screen:", Some(touch_str));
+                widgets::draw_list_row_right(lcd, slot, is_sel, "Touch:", Some(touch_str));
             }
             15 => {
                 let mode_str = match storage.radio.stick_mode {
