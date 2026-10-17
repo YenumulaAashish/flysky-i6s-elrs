@@ -66,6 +66,18 @@ pub enum MixSource {
     Max = 11,
     // 12..29 map to Channel 1..18
     ThrUnipolar = 30,
+    Se = 31,
+    Sf = 32,
+    Sg = 33,
+    Sh = 34,
+    Swi = 35,
+    Swj = 36,
+    Swk = 37,
+    Swl = 38,
+    Vrc = 39,
+    Vrd = 40,
+    Vre = 41,
+    Vrf = 42,
 }
 
 /// Wing and tail aircraft mixing templates.
@@ -148,10 +160,10 @@ pub fn is_switch_active(condition: u8, switches: &Switches) -> bool {
         8 => switches.sc == SwitchPos::Down,
         9 => switches.sd == SwitchPos::Up,
         10 => switches.sd == SwitchPos::Down,
-        11 => switches.swe == SwitchPos::Up,
-        12 => switches.swe == SwitchPos::Down,
-        13 => switches.swf == SwitchPos::Up,
-        14 => switches.swf == SwitchPos::Down,
+        11 => switches.se == SwitchPos::Up,
+        12 => switches.se == SwitchPos::Down,
+        13 => switches.sf == SwitchPos::Up,
+        14 => switches.sf == SwitchPos::Down,
         15 => switches.sg == SwitchPos::Up,
         16 => switches.sg == SwitchPos::Down,
         17 => switches.sh == SwitchPos::Up,
@@ -172,7 +184,7 @@ pub fn is_switch_active(condition: u8, switches: &Switches) -> bool {
 /// Returns false if arm_switch is 0 (unassigned) or out of range.
 #[inline]
 pub fn eval_arm_switch(arm_switch: u8, switches: &Switches) -> bool {
-    if arm_switch > 0 && arm_switch <= 10 {
+    if arm_switch > 0 && arm_switch <= 14 {
         is_switch_active(arm_switch, switches)
     } else {
         false
@@ -187,6 +199,8 @@ pub fn is_dr_high(dr_switch: u8, switches: &Switches) -> bool {
         2 => switches.sb == SwitchPos::Up,
         3 => switches.sc == SwitchPos::Up,
         4 => switches.sd == SwitchPos::Up,
+        5 => switches.se == SwitchPos::Up,
+        6 => switches.sf == SwitchPos::Up,
         _ => true,
     }
 }
@@ -198,7 +212,7 @@ pub fn is_dr_high(dr_switch: u8, switches: &Switches) -> bool {
 ///   - 1: THs (Throttle stick > 5% / > -900)
 ///   - 2: THt (Throttle stick latched once > 5% / > -900)
 ///   - 3: Always On (Continuous)
-///   - 4..=13: Switch conditions SA^..SDv (mapping to condition 1..=10)
+///   - 4..=17: Switch conditions SA^..SFv (mapping to condition 1..=14)
 /// * `throttle`: normalized throttle stick position (-1000..+1000)
 /// * `latched`: mutable reference to latched state (updated for THt)
 /// * `switches`: current switch positions
@@ -223,7 +237,7 @@ pub fn is_timer_active(
             *latched
         }
         3 => true,
-        sw if (4..=13).contains(&sw) => is_switch_active(sw - 3, switches),
+        sw if (4..=17).contains(&sw) => is_switch_active(sw - 3, switches),
         _ => false,
     }
 }
@@ -273,12 +287,12 @@ pub fn evaluate_source(
             let thr = cond_sticks[2] as i32;
             ((thr + MIXER_MAX as i32) / 2).clamp(0, MIXER_MAX as i32)
         }
-        31 => match switches.swe {
+        31 => match switches.se {
             SwitchPos::Up => MIXER_MIN as i32,
             SwitchPos::Mid => MIXER_CENTER as i32,
             SwitchPos::Down => MIXER_MAX as i32,
         },
-        32 => match switches.swf {
+        32 => match switches.sf {
             SwitchPos::Up => MIXER_MIN as i32,
             SwitchPos::Mid => MIXER_CENTER as i32,
             SwitchPos::Down => MIXER_MAX as i32,
@@ -553,8 +567,8 @@ mod tests {
             sb: SwitchPos::Mid,
             sc: SwitchPos::Down,
             sd: SwitchPos::Up,
-            swe: SwitchPos::Up,
-            swf: SwitchPos::Down,
+            se: SwitchPos::Up,
+            sf: SwitchPos::Down,
             sg: SwitchPos::Up,
             sh: SwitchPos::Down,
             swi: SwitchPos::Up,
@@ -574,10 +588,10 @@ mod tests {
         assert!(is_switch_active(8, &switches), "SC Down");
         assert!(is_switch_active(9, &switches), "SD Up");
         assert!(!is_switch_active(10, &switches), "SD Down");
-        assert!(is_switch_active(11, &switches), "SWE Up");
-        assert!(!is_switch_active(12, &switches), "SWE Down");
-        assert!(!is_switch_active(13, &switches), "SWF Up");
-        assert!(is_switch_active(14, &switches), "SWF Down");
+        assert!(is_switch_active(11, &switches), "SE Up");
+        assert!(!is_switch_active(12, &switches), "SE Down");
+        assert!(!is_switch_active(13, &switches), "SF Up");
+        assert!(is_switch_active(14, &switches), "SF Down");
         assert!(is_switch_active(15, &switches), "SG Up");
         assert!(!is_switch_active(16, &switches), "SG Down");
         assert!(!is_switch_active(17, &switches), "SH Up");
@@ -590,6 +604,40 @@ mod tests {
         assert!(!is_switch_active(24, &switches), "SWK Down");
         assert!(!is_switch_active(25, &switches), "SWL Up");
         assert!(is_switch_active(26, &switches), "SWL Down");
+    }
+
+    #[test]
+    fn test_mixer_sources_se_sf_and_vrc_vrf() {
+        let cond_sticks = [0i16; 4];
+        let pots = [100i16, 200i16, -500i16, 750i16, -1000i16, 1000i16];
+        let channels = [0i32; NUM_CHANNELS];
+
+        let mut switches = Switches::DEFAULT;
+        switches.se = SwitchPos::Up;
+        switches.sf = SwitchPos::Down;
+
+        // Source 31 (SE): Up -> MIXER_MIN (-1000)
+        assert_eq!(evaluate_source(31, &cond_sticks, &pots, &switches, &channels), MIXER_MIN as i32);
+        // Source 32 (SF): Down -> MIXER_MAX (1000)
+        assert_eq!(evaluate_source(32, &cond_sticks, &pots, &switches, &channels), MIXER_MAX as i32);
+
+        // Sources 39..42: VRC..VRF (pots[2..6])
+        assert_eq!(evaluate_source(39, &cond_sticks, &pots, &switches, &channels), -500);
+        assert_eq!(evaluate_source(40, &cond_sticks, &pots, &switches, &channels), 750);
+        assert_eq!(evaluate_source(41, &cond_sticks, &pots, &switches, &channels), -1000);
+        assert_eq!(evaluate_source(42, &cond_sticks, &pots, &switches, &channels), 1000);
+
+        switches.se = SwitchPos::Down;
+        switches.sf = SwitchPos::Up;
+
+        assert!(eval_arm_switch(12, &switches), "SE Down arms when sw=12");
+        assert!(!eval_arm_switch(11, &switches), "SE Up does not arm when sw=11");
+        assert!(eval_arm_switch(13, &switches), "SF Up arms when sw=13");
+        assert!(!eval_arm_switch(14, &switches), "SF Down does not arm when sw=14");
+        assert!(!eval_arm_switch(15, &switches), "Out of range arm switch does not arm");
+
+        assert!(!is_dr_high(5, &switches), "SE Down -> Low rates");
+        assert!(is_dr_high(6, &switches), "SF Up -> High rates");
     }
 
     #[test]

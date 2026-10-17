@@ -25,9 +25,9 @@ pub enum CalibStep {
 
 pub struct CalibWizard {
     pub step: CalibStep,
-    centers: [u16; 6], // 0..3: Sticks; 4..5: Aux channels
-    mins: [u16; 6],
-    maxs: [u16; 6],
+    centers: [u16; 10], // 0..3: Sticks; 4..5: Stock Pots; 6..9: Ext Pots (P7)
+    mins: [u16; 10],
+    maxs: [u16; 10],
     prev_keys: u16,
     waiting_release: bool,
     timer_ms: u16,
@@ -43,9 +43,9 @@ impl CalibWizard {
     pub const fn new() -> Self {
         Self {
             step: CalibStep::Inactive,
-            centers: [2048; 6],
-            mins: [4095; 6],
-            maxs: [0; 6],
+            centers: [2048; 10],
+            mins: [4095; 10],
+            maxs: [0; 10],
             prev_keys: 0xFFFF,
             waiting_release: false,
             timer_ms: 0,
@@ -55,9 +55,9 @@ impl CalibWizard {
     /// Start the calibration wizard.
     pub fn start(&mut self, buzzer: &mut Buzzer) {
         self.step = CalibStep::Center;
-        self.centers = [2048; 6];
-        self.mins = [4095; 6];
-        self.maxs = [0; 6];
+        self.centers = [2048; 10];
+        self.mins = [4095; 10];
+        self.maxs = [0; 10];
         self.prev_keys = 0xFFFF; // Block any immediate edge trigger
         self.waiting_release = true; // User must release OK before proceeding
         self.timer_ms = 0;
@@ -126,7 +126,7 @@ impl CalibWizard {
                     }
 
                     self.step = CalibStep::Limits;
-                    self.waiting_release = true; // Must release OK before accepting save in step 2!
+                    self.waiting_release = true;
                     buzzer.play_tone(2400, 50);
                     return;
                 }
@@ -175,7 +175,7 @@ impl CalibWizard {
                     }
                 }
 
-                // Check readiness of sticks (each stick must move at least 250 counts in each direction)
+                // Readiness criteria: sticks must travel at least 250 counts from center in each direction
                 let mut ready_count = 0u8;
                 let mut stick_ready = [false; 4];
                 for (i, ready) in stick_ready.iter_mut().enumerate() {
@@ -191,10 +191,10 @@ impl CalibWizard {
 
                 if ok_pressed {
                     if all_ready {
-                        // Apply OpenTX STICK_TOLERANCE 64 margin (62/64 = ~96.8%)
                         storage.radio.magic = storage::FLASH_MAGIC;
                         storage.radio.version = storage::CONFIG_VERSION;
 
+                        // Save calibrated stick ranges with OpenTX 63/64 margin
                         for i in 0..4 {
                             let center = self.centers[i];
                             let span_neg =
@@ -214,30 +214,15 @@ impl CalibWizard {
                             let span = self.maxs[ch].saturating_sub(self.mins[ch]);
                             if span >= 400 {
                                 let center = self.centers[ch];
-                                let span_neg =
-                                    ((center.saturating_sub(self.mins[ch]) as u32 * 63) / 64) as u16;
-                                let span_pos =
-                                    ((self.maxs[ch].saturating_sub(center) as u32 * 63) / 64) as u16;
+                                let span_neg = ((center.saturating_sub(self.mins[ch]) as u32 * 63)
+                                    / 64) as u16;
+                                let span_pos = ((self.maxs[ch].saturating_sub(center) as u32 * 63)
+                                    / 64) as u16;
                                 storage.radio.aux_pots[ch] = storage::PotCalib::new(
                                     center.saturating_sub(span_neg),
                                     center,
                                     center.saturating_add(span_pos),
                                 );
-
-                                // Backward compatibility for legacy pots (VRA = ch 4, VRB = ch 5)
-                                if ch == 4 {
-                                    storage.radio.pots[0] = ChannelCalib::new(
-                                        center.saturating_sub(span_neg),
-                                        center,
-                                        center.saturating_add(span_pos),
-                                    );
-                                } else if ch == 5 {
-                                    storage.radio.pots[1] = ChannelCalib::new(
-                                        center.saturating_sub(span_neg),
-                                        center,
-                                        center.saturating_add(span_pos),
-                                    );
-                                }
                             }
                         }
 
@@ -246,9 +231,8 @@ impl CalibWizard {
 
                         buzzer.chime_calib_success();
                         self.step = CalibStep::Complete;
-                        self.timer_ms = 1200; // Display success banner for 1.2s
+                        self.timer_ms = 1200;
                     } else {
-                        // Warning buzz if not all sticks have been moved to limits
                         buzzer.play_tone(1100, 100);
                     }
                     return;
@@ -312,13 +296,13 @@ impl CalibWizard {
     }
 }
 
-/// Dynamically render active potentiometer calibration gauges on the right side of the screen.
+/// Dynamically render all active potentiometer calibration gauges on the right side of the screen.
 fn draw_calib_pots(
     lcd: &mut St7567,
     configured_pots: &[ConfiguredPot],
-    centers: &[u16; 6],
-    mins: &[u16; 6],
-    maxs: &[u16; 6],
+    centers: &[u16; 10],
+    mins: &[u16; 10],
+    maxs: &[u16; 10],
     raw_adc: &[u16; adc::NUM_CHANNELS],
 ) {
     let count = configured_pots.len();

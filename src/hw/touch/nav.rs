@@ -18,9 +18,9 @@
 
 use crate::boot;
 use crate::input::Sticks;
-use crate::touch::ft6236::{Gesture, TouchEventKind, TouchSample};
+use super::ft6236::{Gesture, TouchEventKind, TouchSample};
 #[cfg(test)]
-use crate::touch::ft6236::TouchPoint;
+use super::ft6236::TouchPoint;
 
 /// Stick deflection threshold required to engage modifier trim mode.
 pub const TRIM_MODIFIER_STICK_THRESHOLD: i16 = 350;

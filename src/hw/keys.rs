@@ -317,7 +317,7 @@ pub fn is_dfu_requested(keys: u16) -> bool {
 /// Sets `0xDEADBEEF` at SRAM `0x2000_3FF0`, keeps `PB15` power latch HIGH,
 /// and triggers an immediate software reset.
 pub fn reboot_to_dfu() -> ! {
-    crate::power::latch_on();
+    crate::hw::power::latch_on();
 
     #[cfg(not(test))]
     unsafe {
@@ -345,7 +345,7 @@ pub fn check_dfu_entry(profile: &McuProfile) {
     unsafe {
         if core::ptr::read_volatile(DFU_FLAG_ADDR) == DFU_MAGIC_FLAG {
             core::ptr::write_volatile(DFU_FLAG_ADDR, 0); // clear flag
-            crate::power::latch_on();
+            crate::hw::power::latch_on();
             chip::enter_dfu_bootloader(profile);
         }
     }
@@ -374,7 +374,7 @@ pub fn check_dfu_entry(profile: &McuProfile) {
     }
 
     if match_count >= 3 {
-        crate::power::latch_on();
+        crate::hw::power::latch_on();
         #[cfg(not(test))]
         chip::enter_dfu_bootloader(profile);
     }
