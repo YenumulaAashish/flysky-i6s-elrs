@@ -346,7 +346,7 @@ impl ModelConfig {
             failsafe_mode: 0,
             failsafe_timeout: 20,
             rf_protocol: 0,
-            crsf_baud: 0,
+            crsf_baud: 2,
             arm_switch: 0,
             servo_rate_hz: 50,
             rx_out_mode: 0,
@@ -510,7 +510,7 @@ impl RadioStorage {
                 m.rf_protocol = 0;
             }
             if m.crsf_baud > 4 {
-                m.crsf_baud = 0;
+                m.crsf_baud = 2;
             }
             for axis in 0..3 {
                 if m.dr_high[axis] < 30 || m.dr_high[axis] > 100 {
@@ -1270,7 +1270,7 @@ mod tests {
             assert_eq!(m.rx_out_mode, 0);
             assert_eq!(m.rx_serial_proto, 0);
             assert_eq!(m.rf_protocol, 0);
-            assert_eq!(m.crsf_baud, 0);
+            assert_eq!(m.crsf_baud, 2);
             assert_eq!(m.dr_switch, 0);
             assert_eq!(m.wing_tail_mix, 0);
             assert_eq!(m.failsafe_thr, 1000);

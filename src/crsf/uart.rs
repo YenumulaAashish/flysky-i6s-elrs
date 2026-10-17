@@ -167,12 +167,12 @@ pub fn set_module_power(power_on: bool) {
 /// Baud rate divisors for 48.000 MHz clock tree
 pub fn get_brr_for_baud(baud_idx: u8) -> u32 {
     match baud_idx {
-        0 => 114, // 420,000 bps (48,000,000 / 420,000 = 114.285)
+        0 => 417, // 115,200 bps (48,000,000 / 115,200 = 416.66)
         1 => 115, // 416,666 bps (48,000,000 / 416,666.67 = 115.20)
-        2 => 417, // 115,200 bps (48,000,000 / 115,200 = 416.66)
+        2 => 114, // 420,000 bps (48,000,000 / 420,000 = 114.285)
         3 => 52,  // 921,600 bps (48,000,000 / 921,600 = 52.08)
-        4 => 51,  // 1,870,000 bps (2 * 48,000,000 / 1,870,000 = 51.33 ~ 51)
-        _ => 114,
+        4 => 26,  // 1,875,000 bps (48,000,000 / 1,875,000 = 25.6 -> 26 = 1,846,154 bps, 1.5% error)
+        _ => 114, // default 420k (ELRS)
     }
 }
 
@@ -230,9 +230,7 @@ pub fn set_uart_enabled(enabled: bool, baud_idx: u8, half_duplex: bool) {
             let cr3_val = if half_duplex { 1 << 3 } else { 0 };
             ptr::write_volatile(USART1_CR3, cr3_val);
 
-            // 5. Set Baud rate divisor and oversampling mode
-            // For 1.875 MBaud (baud_idx == 4), OVER8 (bit 15 of CR1) provides double oversampling accuracy
-            let over8 = if baud_idx == 4 { 1 << 15 } else { 0 };
+            // 5. Set Baud rate divisor (standard 16x oversampling OVER8 = 0)
             let brr = get_brr_for_baud(baud_idx);
             ptr::write_volatile(USART1_BRR, brr);
 
@@ -249,8 +247,8 @@ pub fn set_uart_enabled(enabled: bool, baud_idx: u8, half_duplex: bool) {
             ptr::write_volatile(NVIC_IPR6, (ipr6 & !(0xFF << 24)) | (0x40 << 24));
             cortex_m::peripheral::NVIC::unmask(stm32f0xx_hal::pac::Interrupt::USART1);
 
-            // 6. Enable UE (bit 0), TE (bit 3), RE (bit 2), and RXNEIE (bit 5) + optional OVER8 (bit 15)
-            ptr::write_volatile(USART1_CR1, (1 << 0) | (1 << 3) | (1 << 2) | (1 << 5) | over8);
+            // 6. Enable UE (bit 0), TE (bit 3), RE (bit 2), and RXNEIE (bit 5)
+            ptr::write_volatile(USART1_CR1, (1 << 0) | (1 << 3) | (1 << 2) | (1 << 5));
         } else {
             // Mask USART1 in NVIC
             cortex_m::peripheral::NVIC::mask(stm32f0xx_hal::pac::Interrupt::USART1);
