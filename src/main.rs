@@ -232,6 +232,7 @@ impl FlightPipeline {
 struct BackgroundIdleManager {
     prev_stick_samples: [u16; 6],
     prev_pots: [i16; 6],
+    pot_center_armed: [bool; 6],
     prev_switches: input::Switches,
     prev_bind_key: bool,
     bind_hold_ms: u32,
@@ -278,6 +279,14 @@ impl BackgroundIdleManager {
                 init_state.aux_pots[7],
                 init_state.aux_pots[8],
                 init_state.aux_pots[9],
+            ],
+            pot_center_armed: [
+                init_state.aux_pots[4].abs() >= 40,
+                init_state.aux_pots[5].abs() >= 40,
+                init_state.aux_pots[6].abs() >= 40,
+                init_state.aux_pots[7].abs() >= 40,
+                init_state.aux_pots[8].abs() >= 40,
+                init_state.aux_pots[9].abs() >= 40,
             ],
             prev_switches: init_state.switches,
             prev_bind_key: bind_on_boot,
@@ -342,15 +351,25 @@ impl BackgroundIdleManager {
         self.menu_was_active = menu_active;
 
         // Pot Center Crossing Haptic/Audio Feedback (VRA..VRF)
-        // Detect transitions across deadband ±25 from outside (|prev| >= 25 && |curr| < 25)
+        // Only active for continuous potentiometers (AdcInputMode::Pot).
+        // Detented pots (POT-D) and spring-loaded wheels (Default) do NOT beep on center.
+        // Hysteresis deadband: arms when outside ±40, beeps once upon entering ±20.
         let max_pot = if storage.radio.ext_adc != 0 { 6 } else { 2 };
         for idx in 0..max_pot {
             let curr = flight.state.aux_pots[idx + 4];
-            let prev = &mut self.prev_pots[idx];
-            if prev.abs() >= 25 && curr.abs() < 25 {
-                buzzer.pot_center_click();
+            let mode = storage.radio.get_adc_mode(idx + 4);
+
+            if mode == crate::storage::AdcInputMode::Pot {
+                if curr.abs() >= 40 {
+                    self.pot_center_armed[idx] = true;
+                } else if self.pot_center_armed[idx] && curr.abs() <= 20 {
+                    buzzer.pot_center_click();
+                    self.pot_center_armed[idx] = false;
+                }
+            } else {
+                self.pot_center_armed[idx] = false;
             }
-            *prev = curr;
+            self.prev_pots[idx] = curr;
         }
 
         // 2. Physical activity & inactivity tracking

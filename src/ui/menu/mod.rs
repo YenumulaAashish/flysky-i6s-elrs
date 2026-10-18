@@ -224,9 +224,9 @@ impl MenuController {
         let vrb_mode = storage.radio.get_raw_adc_mode(5);
 
         if is_source_selection {
-            if crate::hw::HAS_JOG_WHEELS && vra_mode == crate::storage::AdcInputMode::Default && pots.vr1.abs() >= 300 {
+            if crate::hw::HAS_JOG_WHEELS && vra_mode.is_pot() && pots.vr1.abs() >= 300 {
                 pot_change = Some(5); // MixSource::Vra
-            } else if crate::hw::HAS_JOG_WHEELS && vrb_mode == crate::storage::AdcInputMode::Default && pots.vr2.abs() >= 300 {
+            } else if crate::hw::HAS_JOG_WHEELS && vrb_mode.is_pot() && pots.vr2.abs() >= 300 {
                 pot_change = Some(6); // MixSource::Vrb
             } else if (pots.vr1 - self.prev_vr1).abs() >= 300 {
                 pot_change = Some(5); // MixSource::Vra
@@ -238,37 +238,24 @@ impl MenuController {
         }
 
         // Jog Wheel / Potentiometer Navigation
-        // 1. Spring-Loaded Jog Wheels (AdcInputMode::Default):
-        //    Deflection > 300: scroll DOWN / increment
-        //    Deflection < -300: scroll UP / decrement
-        //    Release into [-300, 300]: stops immediately without overshoot.
-        // 2. Continuous / Detented Potentiometers (AdcInputMode::Pot / PotDetent):
-        //    Relative rotation: delta >= 150 -> scroll DOWN 1 step, delta <= -150 -> scroll UP 1 step.
-        //    Stationary in detent/middle: delta == 0 -> no scrolling.
-        // 3. Switch Modes (TwoPos, ThreePos, SixPos, InstantTrim):
-        //    Ignored for menu navigation (avoids hijacking menu when switches are toggled).
-        // 4. InputSetup Screen:
-        //    Paused while actively configuring input types to prevent runaway cursor jumping.
+        // Incremental button-like mode:
+        // - Deflecting to one end (> 300 or < -300) steps position by exactly one line.
+        // - Holding at the end does NOT repeat.
+        // - Must return to the neutral middle deadband ([-300, 300]) to re-arm for the next line change.
+        // - Active for Default (spring wheels), Pot, and PotDetent (detented pots).
+        // - Switch modes (TwoPos, ThreePos, etc.) and InputSetup screen are excluded to prevent runaway scrolling.
         if crate::hw::HAS_JOG_WHEELS && !is_source_selection && self.state != MenuState::InputSetup {
             let mut current_dir: i8 = 0;
 
             // Check VRA (Channel 4)
             match vra_mode {
-                crate::storage::AdcInputMode::Default => {
+                crate::storage::AdcInputMode::Default
+                | crate::storage::AdcInputMode::Pot
+                | crate::storage::AdcInputMode::PotDetent => {
                     if pots.vr1 > 300 {
                         current_dir = 1;
                     } else if pots.vr1 < -300 {
                         current_dir = -1;
-                    }
-                }
-                crate::storage::AdcInputMode::Pot | crate::storage::AdcInputMode::PotDetent => {
-                    let d = pots.vr1 - self.prev_vr1;
-                    if d >= 150 {
-                        down_pressed = true;
-                        self.prev_vr1 = pots.vr1;
-                    } else if d <= -150 {
-                        up_pressed = true;
-                        self.prev_vr1 = pots.vr1;
                     }
                 }
                 _ => {}
@@ -277,21 +264,13 @@ impl MenuController {
             // Check VRB (Channel 5) if VRA is centered / inactive
             if current_dir == 0 {
                 match vrb_mode {
-                    crate::storage::AdcInputMode::Default => {
+                    crate::storage::AdcInputMode::Default
+                    | crate::storage::AdcInputMode::Pot
+                    | crate::storage::AdcInputMode::PotDetent => {
                         if pots.vr2 > 300 {
                             current_dir = 1;
                         } else if pots.vr2 < -300 {
                             current_dir = -1;
-                        }
-                    }
-                    crate::storage::AdcInputMode::Pot | crate::storage::AdcInputMode::PotDetent => {
-                        let d = pots.vr2 - self.prev_vr2;
-                        if d >= 150 {
-                            down_pressed = true;
-                            self.prev_vr2 = pots.vr2;
-                        } else if d <= -150 {
-                            up_pressed = true;
-                            self.prev_vr2 = pots.vr2;
                         }
                     }
                     _ => {}
@@ -312,11 +291,11 @@ impl MenuController {
             }
             self.jog_repeat_timer_ms = 0;
 
-            // Keep baseline tracking for spring jog wheels
-            if vra_mode == crate::storage::AdcInputMode::Default {
+            // Keep baseline tracking for jog wheels
+            if vra_mode.is_pot() {
                 self.prev_vr1 = pots.vr1;
             }
-            if vrb_mode == crate::storage::AdcInputMode::Default {
+            if vrb_mode.is_pot() {
                 self.prev_vr2 = pots.vr2;
             }
         } else {
@@ -600,8 +579,8 @@ mod tests {
         );
         assert_eq!(ctrl.selected_item, 0);
 
-        // Turn VRA clockwise by +160 counts -> triggers DOWN step to 1
-        pots.vr1 = 160;
+        // Flick VRA clockwise (> 300 counts) -> triggers DOWN step to 1
+        pots.vr1 = 350;
         ctrl.update(
             &mut lcd,
             0,
@@ -615,7 +594,24 @@ mod tests {
         );
         assert_eq!(ctrl.selected_item, 1);
 
-        // Stationary at 160 counts: no further movement! Position remains 1!
+        // Holding at 350 counts: no auto-repeat! Position remains 1!
+        for _ in 0..10 {
+            ctrl.update(
+                &mut lcd,
+                0,
+                &switches,
+                &pots,
+                &mut storage,
+                &mut trims,
+                &raw_adc,
+                &rf_chs,
+                &mut buzzer,
+            );
+            assert_eq!(ctrl.selected_item, 1);
+        }
+
+        // Return to middle deadband (0 counts) -> position remains 1, rearms trigger!
+        pots.vr1 = 0;
         ctrl.update(
             &mut lcd,
             0,
@@ -629,8 +625,8 @@ mod tests {
         );
         assert_eq!(ctrl.selected_item, 1);
 
-        // Turn VRA counter-clockwise to -50 counts (delta = -210) -> triggers UP step to 0
-        pots.vr1 = -50;
+        // Flick VRA counter-clockwise (< -300 counts) -> triggers UP step to 0
+        pots.vr1 = -350;
         ctrl.update(
             &mut lcd,
             0,
