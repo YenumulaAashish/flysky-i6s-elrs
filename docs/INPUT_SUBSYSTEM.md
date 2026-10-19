@@ -21,10 +21,10 @@ The autonomous `ADC1` scanner digitizes 11 standard channels (`0x07FF`) or 15 ch
 | **8** | `PB0` | **Switch SC** (Default: 3-Pos) | UP (-1000) / MID (0 / 1500 µs) / DOWN (+1000) |
 | **9** | `PB1` | **Switch SD** (Default: 2-Pos) | UP (-1000 / 988 µs) / DOWN (+1000 / 2012 µs) |
 | **10** | `PC0` | **Battery Voltage Sense** | $10\text{ k}\Omega / 5.1\text{ k}\Omega$ divider: `(raw * 977064) / 409500` mV |
-| **11** | `PC1` | **Ext Analog VRC / SWI** (`ADC_IN11`)| Left (-1000) .. Right (+1000) or Switch `SWI` |
-| **12** | `PC2` | **Ext Analog VRD / SWJ** (`ADC_IN12`)| Left (-1000) .. Right (+1000) or Switch `SWJ` |
-| **13** | `PC3` | **Ext Analog VRE / SWK** (`ADC_IN13`)| Left (-1000) .. Right (+1000) or Switch `SWK` |
-| **14** | `PC4` | **Ext Analog VRF / SWL** (`ADC_IN14`)| Left (-1000) .. Right (+1000) or Switch `SWL` |
+| **11** | `PC2` | **Ext Analog VRC / SWI** (`ADC_IN12`)| Left (-1000) .. Right (+1000) or Switch `SWI` |
+| **12** | `PC3` | **Ext Analog VRD / SWJ** (`ADC_IN13`)| Left (-1000) .. Right (+1000) or Switch `SWJ` |
+| **13** | `PC4` | **Ext Analog VRE / SWK** (`ADC_IN14`)| Left (-1000) .. Right (+1000) or Switch `SWK` |
+| **14** | `PC5` | **Ext Analog VRF / SWL** (`ADC_IN15`)| Left (-1000) .. Right (+1000) or Switch `SWL` |
 
 ### Stick Mode Remapping (Mode 1 .. Mode 4)
 Physical gimbals (`rh`, `rv`, `lv`, `lh`) are decoupled from logical primary flight controls (`aileron`, `elevator`, `throttle`, `rudder`) based on `Radio Setup -> Stick Mode:`:
@@ -37,7 +37,7 @@ Physical gimbals (`rh`, `rv`, `lv`, `lh`) are decoupled from logical primary fli
 
 ## 2. Universal Configurable ADC Input Modes (`AdcInputMode`)
 
-All 10 auxiliary analog inputs (`SA..SD`, `VRA..VRB`, and extended `VRC..VRF` on `PC1..PC4`) can be individually configured in **`Radio Setup -> Inputs` (`INPUT MODES`)**:
+All 10 auxiliary analog inputs (`SA..SD`, `VRA..VRB`, and extended `VRC..VRF` on `PC2..PC5`) can be individually configured in **`Radio Setup -> Inputs` (`INPUT MODES`)**:
 
 | Mode Value | Enum Variant | UI Label | Behavior |
 | :---: | :--- | :--- | :--- |

@@ -11,11 +11,11 @@
 //!
 //! ### Additional ADC Channels for Hardware Modding (STM32F072VBT6 LQFP100):
 //! The FS-i6S transmitter utilizes an STM32F072VBT6 (100-pin LQFP) MCU.
-//! On this package, ADC1 has up to 16 external channels. Channels on PC1..PC4:
-//! - `PC1` (ADC1_IN11, Pin 16): Auxiliary Pot / Slider VRC (index 11)
-//! - `PC2` (ADC1_IN12, Pin 17): Auxiliary Pot / Slider VRD (index 12)
-//! - `PC3` (ADC1_IN13, Pin 18): Auxiliary Pot / 6-pos VRE (index 13)
-//! - `PC4` (ADC1_IN14, Pin 33): Auxiliary Pot / Sensor VRF (index 14)
+//! On this package, ADC1 has up to 16 external channels. Channels on PC2..PC5:
+//! - `PC2` (ADC1_IN12, Pin 17): Auxiliary Pot / Slider VRC (index 11)
+//! - `PC3` (ADC1_IN13, Pin 18): Auxiliary Pot / Slider VRD (index 12)
+//! - `PC4` (ADC1_IN14, Pin 33): Auxiliary Pot / 6-pos VRE (index 13)
+//! - `PC5` (ADC1_IN15, Pin 34): Auxiliary Pot / Sensor VRF (index 14)
 
 #[cfg(not(test))]
 use core::ptr;
@@ -113,7 +113,7 @@ pub fn wait_first_conversion() {
     }
 }
 
-/// Dynamically enable or disable extended 15-channel scanning (adding PC1..PC4).
+/// Dynamically enable or disable extended 15-channel scanning (adding PC2..PC5).
 pub fn set_ext_adc_enabled(enabled: bool) {
     EXT_ADC_ENABLED.store(enabled, Ordering::Relaxed);
     #[cfg(not(test))]
@@ -143,8 +143,8 @@ unsafe fn reconfigure_scan(enabled: bool) {
     dma.ifcr.write(|w| w.bits(0x0F));
     adc.isr.write(|w| w.bits((1 << 4) | (1 << 3)));
 
-    // 4. Update CHSELR
-    let chselr = if enabled { 0x7FFF } else { 0x07FF };
+    // 4. Update CHSELR (0x07FF = CH0..CH10; 0xF7FF = CH0..CH10 + CH12..CH15 / PC2..PC5)
+    let chselr = if enabled { 0xF7FF } else { 0x07FF };
     adc.chselr.write(|w| w.bits(chselr));
 
     // 5. Update CNDTR and re-enable DMA
@@ -188,9 +188,9 @@ pub fn init(ext_adc_en: bool) {
         gpiob.moder.modify(|r, w| w.bits((r.bits() & !0x0000_000F) | 0x0000_000F));
         gpiob.pupdr.modify(|r, w| w.bits(r.bits() & !0x0000_000F));
 
-        // PC0..PC4: (pins 0 through 4, bits [9:0])
-        gpioc.moder.modify(|r, w| w.bits((r.bits() & !0x0000_03FF) | 0x0000_03FF));
-        gpioc.pupdr.modify(|r, w| w.bits(r.bits() & !0x0000_03FF));
+        // PC0..PC5: (pins 0 through 5, bits [11:0], keeping PC12 touch int and PC13 untouched)
+        gpioc.moder.modify(|r, w| w.bits((r.bits() & !0x0000_0FFF) | 0x0000_0FFF));
+        gpioc.pupdr.modify(|r, w| w.bits(r.bits() & !0x0000_0FFF));
 
         // 4. ADC Clock Selection: Synchronous PCLK/4 (CKMODE = 10 in CFGR2)
         adc.cfgr2.write(|w| w.ckmode().bits(0b10));
@@ -203,9 +203,9 @@ pub fn init(ext_adc_en: bool) {
             timeout -= 1;
         }
 
-        // 6. Configure Channels (0..10 or 0..14)
-        // 0x07FF = bits [10:0] set; 0x7FFF = bits [14:0] set
-        let chselr = if ext_adc_en { 0x7FFF } else { 0x07FF };
+        // 6. Configure Channels (0..10 or 0..10 + 12..15)
+        // 0x07FF = bits [10:0] set; 0xF7FF = bits [10:0] + [15:12] set
+        let chselr = if ext_adc_en { 0xF7FF } else { 0x07FF };
         adc.chselr.write(|w| w.bits(chselr));
 
         // 7. Sampling Time: 239.5 ADC cycles (SMPR = 0b111) for low-noise sampling

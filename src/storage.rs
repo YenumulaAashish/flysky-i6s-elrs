@@ -152,7 +152,7 @@ pub struct RadioConfig {
     pub rx_out_mode: u8,           // 112 (0: PWM, 1: PPM, default 0)
     pub rx_serial_proto: u8,       // 113 (0: i-BUS, 1: S.BUS, default 0)
     pub ext_switches: u8,          // 114 (0: Disabled, 1: Enabled / PC12+PC15)
-    pub ext_adc: u8,               // 115 (0: Disabled, 1: Enabled / Header P7 AD12-AD15 or PC1-PC4)
+    pub ext_adc: u8,               // 115 (0: Disabled, 1: Enabled / Header P7 AD12-AD15 or PC2-PC5)
     pub adc_modes: [u8; 10],       // 116..126: Input modes for the 10 auxiliary analog channels
     pub stick_mode: u8,            // 126 (0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4)
     pub telem_slots: [u8; 4],      // 127..131: Configurable telemetry dashboard sensor slots (1..4)

@@ -29,7 +29,7 @@ Implemented in [`src/chip/mod.rs`](../src/chip/mod.rs) using pure PAC direct reg
 | **FS-i6S Hardware Layer** | [`src/hw/mod.rs`](../src/hw/mod.rs) | Board identity, $10\text{ k}\Omega / 5.1\text{ k}\Omega$ battery divider math, 20-item `Radio Setup` extensions, adaptive dashboard switch/pot rendering, and `BoardIdleState` |
 | | [`src/hw/power.rs`](../src/hw/power.rs) | `PB15` electronic power latch, `PB14` hold-to-shutdown (>= 1.5s) state machine, and `PD10`/`PD11` blue LEDs |
 | | [`src/hw/touch/`](../src/hw/touch/mod.rs) | FocalTech FT6236 400 kHz `I2C1` driver (`ft6236.rs`) and gesture / tap / stick-modifier navigation engine (`nav.rs`) |
-| | [`src/hw/adc.rs`](../src/hw/adc.rs) | Autonomous `ADC1` + `DMA1_CH1` scanner for 11 standard channels (`0x07FF`) or 15 channels (`0x7FFF`, adding `PC1..PC4`) |
+| | [`src/hw/adc.rs`](../src/hw/adc.rs) | Autonomous `ADC1` + `DMA1_CH1` scanner for 11 standard channels (`0x07FF`) or 15 channels (`0xF7FF`, adding `PC2..PC5`) |
 | | [`src/hw/keys.rs`](../src/hw/keys.rs) | Front/rear tactile buttons (`PA9`/`PA10`), J4 SWD buttons (`PA13`/`PA14`), and cold/warm DFU bootloader entry |
 | | [`src/hw/uart.rs`](../src/hw/uart.rs) | `USART1` (`PB6` TX / `PB7` RX on `J15`, IRQ 27) interrupt-driven CRSF transceiver and `PF6` (`H1`) module power control |
 

@@ -208,6 +208,68 @@ pub fn init() {
     }
 }
 
+/// Hard reset FT6236 controller by toggling PA15 LOW for 20 ms, re-initializing I2C1 and registers.
+pub fn reset_touch_controller() {
+    #[cfg(not(test))]
+    unsafe {
+        let gpioa = &*pac::GPIOA::ptr();
+        let i2c1 = &*pac::I2C1::ptr();
+
+        // 1. Disable I2C1 peripheral to release lines
+        i2c1.cr1.modify(|_, w| w.pe().clear_bit());
+
+        // 2. Pulse PA15 LOW for ~20 ms
+        gpioa.bsrr.write(|w| w.bits(1 << (15 + 16)));
+        delay_cycles(48_000 * 20);
+        gpioa.bsrr.write(|w| w.bits(1 << 15));
+        delay_cycles(48_000 * 50);
+
+        // 3. Clear all I2C1 flags and re-enable peripheral
+        i2c1.icr.write(|w| w.bits(0x3F38));
+        i2c1.cr1.modify(|_, w| w.pe().set_bit());
+
+        // 4. Configure FT6236 registers
+        delay_cycles(48_000 * 10);
+        write_reg(0xA4, 0x00);
+        write_reg(0x80, 22);
+        write_reg(0x88, 14);
+    }
+}
+
+/// Helper to abort an in-progress I2C transaction and clear error flags.
+#[cfg(not(test))]
+unsafe fn abort_i2c_transaction(i2c1: &pac::i2c1::RegisterBlock) {
+    // Send STOP request to release the bus
+    i2c1.cr2.write(|w| w.stop().set_bit());
+    let mut timeout = 2_000u32;
+    while !i2c1.isr.read().stopf().bit() && timeout > 0 {
+        timeout -= 1;
+    }
+    // Clear all error/status flags
+    i2c1.icr.write(|w| w.bits(0x3F38));
+}
+
+#[cfg(not(test))]
+static I2C_FAIL_COUNT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+#[cfg(not(test))]
+fn record_i2c_failure() {
+    use core::sync::atomic::Ordering;
+    let fails = I2C_FAIL_COUNT.load(Ordering::Relaxed) + 1;
+    if fails >= 5 {
+        I2C_FAIL_COUNT.store(0, Ordering::Relaxed);
+        reset_touch_controller();
+    } else {
+        I2C_FAIL_COUNT.store(fails, Ordering::Relaxed);
+    }
+}
+
+#[cfg(not(test))]
+fn record_i2c_success() {
+    use core::sync::atomic::Ordering;
+    I2C_FAIL_COUNT.store(0, Ordering::Relaxed);
+}
+
 /// Write a single 8-bit value to an FT6236 register at address `0x38`.
 pub fn write_reg(reg: u8, val: u8) -> bool {
     #[cfg(not(test))]
@@ -222,12 +284,13 @@ pub fn write_reg(reg: u8, val: u8) -> bool {
             let mut timeout = 10_000u32;
             while !i2c1.isr.read().txis().bit() && timeout > 0 {
                 if i2c1.isr.read().nackf().bit() {
-                    i2c1.icr.write(|w| w.nackcf().set_bit());
+                    abort_i2c_transaction(i2c1);
                     return false;
                 }
                 timeout -= 1;
             }
             if timeout == 0 {
+                abort_i2c_transaction(i2c1);
                 return false;
             }
             i2c1.txdr.write(|w| w.txdata().bits(reg));
@@ -236,12 +299,13 @@ pub fn write_reg(reg: u8, val: u8) -> bool {
             timeout = 10_000;
             while !i2c1.isr.read().txis().bit() && timeout > 0 {
                 if i2c1.isr.read().nackf().bit() {
-                    i2c1.icr.write(|w| w.nackcf().set_bit());
+                    abort_i2c_transaction(i2c1);
                     return false;
                 }
                 timeout -= 1;
             }
             if timeout == 0 {
+                abort_i2c_transaction(i2c1);
                 return false;
             }
             i2c1.txdr.write(|w| w.txdata().bits(val));
@@ -293,12 +357,15 @@ pub fn read_touch() -> Option<TouchSample> {
             let mut timeout = 10_000u32;
             while !i2c1.isr.read().txis().bit() && timeout > 0 {
                 if i2c1.isr.read().nackf().bit() {
-                    i2c1.icr.write(|w| w.nackcf().set_bit());
+                    abort_i2c_transaction(i2c1);
+                    record_i2c_failure();
                     return None;
                 }
                 timeout -= 1;
             }
             if timeout == 0 {
+                abort_i2c_transaction(i2c1);
+                record_i2c_failure();
                 return None;
             }
 
@@ -308,9 +375,16 @@ pub fn read_touch() -> Option<TouchSample> {
             // Wait for TC (Transfer Complete)
             timeout = 10_000;
             while !i2c1.isr.read().tc().bit() && timeout > 0 {
+                if i2c1.isr.read().nackf().bit() {
+                    abort_i2c_transaction(i2c1);
+                    record_i2c_failure();
+                    return None;
+                }
                 timeout -= 1;
             }
             if timeout == 0 {
+                abort_i2c_transaction(i2c1);
+                record_i2c_failure();
                 return None;
             }
 
@@ -324,12 +398,15 @@ pub fn read_touch() -> Option<TouchSample> {
                 timeout = 10_000;
                 while !i2c1.isr.read().rxne().bit() && timeout > 0 {
                     if i2c1.isr.read().nackf().bit() {
-                        i2c1.icr.write(|w| w.nackcf().set_bit());
+                        abort_i2c_transaction(i2c1);
+                        record_i2c_failure();
                         return None;
                     }
                     timeout -= 1;
                 }
                 if timeout == 0 {
+                    abort_i2c_transaction(i2c1);
+                    record_i2c_failure();
                     return None;
                 }
                 *byte = i2c1.rxdr.read().rxdata().bits();
@@ -342,6 +419,7 @@ pub fn read_touch() -> Option<TouchSample> {
             }
             i2c1.icr.write(|w| w.stopcf().set_bit());
 
+            record_i2c_success();
             Some(parse_packet(&buf))
         }
     }

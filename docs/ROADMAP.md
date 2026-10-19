@@ -24,7 +24,7 @@ This document tracks the phased implementation, historical milestones, and ongoi
 - [x] Continuous 11/15-channel DMA1 ADC1 scanner (0.23 ms complete scan).
 - [x] OpenTX Modified Moving Average (MMA) micro-jitter filter (0 latency on stick movement).
 - [x] Exponential moving average (EMA) filter on battery voltage ADC (`PC0`, $10\text{ k}\Omega / 5.1\text{ k}\Omega$ divider).
-- [x] Decode switches (`SA..SD`), rotary pots (`VRA`, `VRB`), extended analog (`PC1..PC4`), and J4 tactile buttons (`PA13`/`PA14`).
+- [x] Decode switches (`SA..SD`), rotary pots (`VRA`, `VRB`), extended analog (`PC2..PC5`), and J4 tactile buttons (`PA13`/`PA14`).
 - [x] Configurable Stick Modes 1, 2, 3, and 4 with decoupled logical controls (`aileron`, `elevator`, `throttle`, `rudder`).
 
 ### Phase 3: A7105 SPI Driver & Protocol Timing (COMPLETED)
@@ -49,7 +49,7 @@ This document tracks the phased implementation, historical milestones, and ongoi
 - [x] Hierarchical Settings Menu (`src/ui/menu/`) navigated via touch gestures, tap hitboxes, and front buttons.
 - [x] Hardware PWM backlight dimming driver on `PC9` (`TIM3_CH4`, 1 kHz PWM) while keeping stock `PF3` supported.
 - [x] 18-channel live pulse width monitor with dynamic channel labels and microsecond readouts.
-- [x] Real-time 12-bit Analog Diagnostics (`Diag Anas`) across 4 graphic pages (`ANALOG (1-6)`, `ANALOG (7-11)`, `SWITCHES (E/F/G/H)`, `EXT ANALOG (PC1-4)`).
+- [x] Real-time 12-bit Analog Diagnostics (`Diag Anas`) across 4 graphic pages (`ANALOG (1-6)`, `ANALOG (7-11)`, `SWITCHES (E/F/G/H)`, `EXT ANALOG (PC2-5)`).
 - [x] System Information screen displaying MCU profile, 96-bit silicon UID, git commit hash, and one-tap DFU reboot.
 
 ### Phase 7: 20-Model Memory & Smoothed Throttle Curves (COMPLETED)
@@ -116,7 +116,7 @@ This document tracks the phased implementation, historical milestones, and ongoi
 
 ### Phase 22: Universal Input Modes & Extended Hardware Suite (COMPLETED)
 - [x] Universal configurable ADC input modes (`DEFAULT`, `2-POS`, `3-POS`, `6-POS`, `POT`, `POT-D`, `INST-TRIM`) for all 10 auxiliary channels (`SA..SD`, `VRA..VRB`, `VRC..VRF`).
-- [x] Extended ADC inputs on `PC1`–`PC4` (`ADC_IN11`–`ADC_IN14`) with autonomous 15-channel DMA1 scanning (`0x7FFF`).
+- [x] Extended ADC inputs on `PC2`–`PC5` (`ADC_IN12`–`ADC_IN15`) with autonomous 15-channel DMA1 scanning (`0xF7FF`).
 - [x] J4 SWD header switch expansion (`PA13` SG / `PA14` SH) and configurable rear tactile button functions (`SWE`/`SWF`, `TIMER RESET`, `INSTANT TRIM`, `TRIMS MOD`).
 
 ### Phase 23: Configurable Telemetry Dashboard & RF Power Management (COMPLETED)

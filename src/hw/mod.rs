@@ -48,10 +48,10 @@ pub const AUX_NAMES: [&str; 10] = [
     "SD (PB1):",
     "VRA (PA6):",
     "VRB (PA7):",
-    "VRC (PC1):",
-    "VRD (PC2):",
-    "VRE (PC3):",
-    "VRF (PC4):",
+    "VRC (PC2):",
+    "VRD (PC3):",
+    "VRE (PC4):",
+    "VRF (PC5):",
 ];
 
 pub const ADAPTIVE_CH_NAMES: [&str; 10] = ["A", "B", "C", "D", "1", "2", "I", "J", "K", "L"];
@@ -467,7 +467,7 @@ pub fn diag_page_title(page_idx: usize) -> &'static str {
         0 => "ANALOG (1-6)",
         1 => "ANALOG (7-11)",
         2 => "SWITCHES (E/F/G/H)",
-        _ => "EXT ANALOG (PC1-4)",
+        _ => "EXT ANALOG (PC2-5)",
     }
 }
 
@@ -508,7 +508,7 @@ pub fn draw_diag_ext_page(
         };
         lcd.draw_str_4x6(2, 13, cfg_label, false);
 
-        let names: [&str; 4] = ["VRC:PC1 ", "VRD:PC2 ", "VRE:PC3 ", "VRF:PC4 "];
+        let names: [&str; 4] = ["VRC:PC2 ", "VRD:PC3 ", "VRE:PC4 ", "VRF:PC5 "];
         for (i, &name) in names.iter().enumerate() {
             let adc_idx = 11 + i;
             let y = 25 + (i as i32 * 7);

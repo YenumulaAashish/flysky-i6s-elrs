@@ -133,22 +133,17 @@ All 14 auxiliary channels (CH5 through CH18) can be independently assigned to an
 | Source ID | Label | Description | Output Range |
 | :--- | :--- | :--- | :--- |
 | **0** | `None` | Neutral output (no input source) | 1500 µs |
-| **1** | `Roll` | Conditioned Aileron stick input | 1000..2000 µs |
-| **2** | `Pitch`| Conditioned Elevator stick input | 1000..2000 µs |
-| **3** | `Thr`  | Spline-curved Throttle stick input | 1000..2000 µs |
-| **4** | `Yaw`  | Conditioned Rudder stick input | 1000..2000 µs |
-| **5** | `VRA`  | Left rotary dial potentiometer | 1000..2000 µs |
-| **6** | `VRB`  | Right rotary dial potentiometer | 1000..2000 µs |
-| **7** | `SA`   | 2-position toggle switch | UP: 1000 µs / DN: 2000 µs |
-| **8** | `SB`   | 3-position toggle switch | UP: 1000 µs / MID: 1500 µs / DN: 2000 µs |
-| **9** | `SC`   | 3-position toggle switch | UP: 1000 µs / MID: 1500 µs / DN: 2000 µs |
-| **10**| `SD`   | 2-position toggle switch | UP: 1000 µs / DN: 2000 µs |
-| **31**| `SE`   | Auxiliary toggle switch (`PC12`) | UP: 1000 µs / DN: 2000 µs |
-| **32**| `SF`   | Auxiliary toggle switch (`PC15`) | UP: 1000 µs / DN: 2000 µs |
-| **33**| `VRC`  | Auxiliary analog pot/slider (`PC2` on P7) | 1000..2000 µs |
-| **34**| `VRD`  | Auxiliary analog pot/slider (`PC3` on P7) | 1000..2000 µs |
-| **35**| `VRE`  | Auxiliary analog pot/slider (`PC4` on P7) | 1000..2000 µs |
-| **36**| `VRF`  | Auxiliary analog pot/slider (`PC5` on P7) | 1000..2000 µs |
+| **1** | `Roll` | Conditioned Aileron stick input | 988..2012 µs |
+| **2** | `Pitch`| Conditioned Elevator stick input | 988..2012 µs |
+| **3** | `Thr`  | Spline-curved Throttle stick input | 988..2012 µs |
+| **4** | `Yaw`  | Conditioned Rudder stick input | 988..2012 µs |
+| **5** | `VRA`  | Left rotary dial potentiometer | 988..2012 µs |
+| **6** | `VRB`  | Right rotary dial potentiometer | 988..2012 µs |
+| **7..10** | `SA..SD` | Physical switches `SA`..`SD` (2-pos, 3-pos, 6-pos, or pot per `AdcInputMode`) | 988..2012 µs |
+| **31..32**| `SE..SF` | Rear tactile buttons `PA9`/`PA10` (when configured as `RC SW`) | UP: 988 µs / DN: 2012 µs |
+| **33..34**| `SG..SH` | Header `J4` tactile buttons `PA13`/`PA14` (when `J4 Mode` = `SG/SH BTN`) | UP: 988 µs / DN: 2012 µs |
+| **35..36**| `SWI..SWJ`| Extended switches on `PB6`/`PB7` (2-pos or 3-pos via `AdcInputMode`) | 988 / 1500 / 2012 µs |
+| **37..40**| `VRC..VRF`| Extended analog pots on `PC2..PC5` (when `Ext ADC (PC)` enabled) | 988..2012 µs |
 
 ### Factory Default Auxiliary Mapping
 - `CH5`: **SA** (Arming switch / Flight mode)
