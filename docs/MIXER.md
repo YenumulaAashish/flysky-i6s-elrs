@@ -140,8 +140,8 @@ All 14 auxiliary channels (`CH5` through `CH18`) can be independently assigned t
 | **7..10** | `SA..SD` | Physical switches `SA`..`SD` (2-pos, 3-pos, 6-pos, or pot per `AdcInputMode`) | 988..2012 µs |
 | **31..32**| `SE..SF` | Rear tactile buttons `PA9`/`PA10` (when configured as `RC SW`) | UP: 988 µs / DN: 2012 µs |
 | **33..34**| `SG..SH` | Header `J4` tactile buttons `PA13`/`PA14` (when `J4 Mode` = `SG/SH BTN`) | UP: 988 µs / DN: 2012 µs |
-| **35..38**| `VRC..VRF`| Extended analog pots on `PC1..PC4` (when `Ext ADC (PC)` enabled) | 988..2012 µs |
-| **39..42**| `SWI..SWL`| Extended switches on `PC1..PC4` (2-pos or 3-pos via `AdcInputMode`) | 988 / 1500 / 2012 µs |
+| **35..36**| `SWI..SWJ`| Extended switches on `PB6`/`PB7` (2-pos or 3-pos via `AdcInputMode`) | 988 / 1500 / 2012 µs |
+| **37..40**| `VRC..VRF`| Extended analog pots on `PC1..PC4` (when `Ext ADC (PC)` enabled) | 988..2012 µs |
 
 ### Factory Default Auxiliary Mapping
 - `CH5`: **SA** (Arming switch / Flight mode)
@@ -164,10 +164,10 @@ Each mix line comprises a compact 6-byte struct stored in Flash memory:
 ```rust
 pub struct MixLine {
     pub target_ch: u8,   // 0: Disabled, 1..18: Target Channel (CH1..CH18)
-    pub source: u8,      // 0: None, 1..4: AETR, 5..6: VRA/VRB, 7..10: SA..SD, 11: MAX, 12..29: CH1..CH18, 30: Thr+, 31..42: SE..SWL
+    pub source: u8,      // 0: None, 1..4: AETR, 5..6: VRA/VRB, 7..10: SA..SD, 11: MAX, 12..29: CH1..CH18, 30: Thr+, 31..40: SE..VRF
     pub weight: i8,      // -100% .. +100% (gain / authority)
     pub offset: i8,      // -100% .. +100% (center shift)
-    pub switch: u8,      // 0: Always ON, 1..26: Physical switch position condition (SA^..SWLv)
+    pub switch: u8,      // 0: Always ON, 1..22: Physical switch position condition (SA^..SWJv)
     pub mode: u8,        // 0: ADD (+), 1: MULTIPLY (*), 2: REPLACE (:=)
 }
 ```
@@ -188,7 +188,7 @@ When a mix line is active, it modifies the target channel based on its configure
    ```
 
 ### Switch Conditions
-A mix line can be gated by any hardware switch condition (`0` = `ON`, `1..10` = `SA^`..`SDv`, `11..14` = `SE^`..`SFv`, `15..18` = `SG^`..`SHv`, `19..26` = `SWI^`..`SWLv`). Flipping any physical switch while editing the `Switch:` field auto-detects and selects that switch condition immediately.
+A mix line can be gated by any hardware switch condition (`0` = `ON`, `1..10` = `SA^`..`SDv`, `11..14` = `SE^`..`SFv`, `15..18` = `SG^`..`SHv`, `19..22` = `SWI^`..`SWJv`). Flipping any physical switch while editing the `Switch:` field auto-detects and selects that switch condition immediately.
 
 ---
 

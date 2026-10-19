@@ -96,10 +96,10 @@ pub struct RadioConfig {
 #[repr(C)]
 pub struct MixLine {
     pub target_ch: u8,   // 0: Disabled, 1..18: Target Channel CH1..CH18
-    pub source: u8,      // 0: None, 1..4: AETR, 5..6: VRA..VRB, 7..10: SA..SD, 11: MAX, 12..29: CH1..CH18, 30: Thr+, 31..42: SE..SWL
+    pub source: u8,      // 0: None, 1..4: AETR, 5..6: VRA..VRB, 7..10: SA..SD, 11: MAX, 12..29: CH1..CH18, 30: Thr+, 31..40: SE..VRF
     pub weight: i8,      // -100% .. +100%
     pub offset: i8,      // -100% .. +100%
-    pub switch: u8,      // 0: Always On, 1..26: Switch condition (SA^..SWLv)
+    pub switch: u8,      // 0: Always On, 1..22: Switch condition (SA^..SWJv)
     pub mode: u8,        // 0: Add (+), 1: Multiply (*), 2: Replace (:=)
 }
 

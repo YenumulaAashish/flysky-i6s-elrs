@@ -57,7 +57,7 @@ pub const AUX_NAMES: [&str; 10] = [
 pub const ADAPTIVE_CH_NAMES: [&str; 10] = ["A", "B", "C", "D", "1", "2", "I", "J", "K", "L"];
 
 pub const AUX_SOURCES: &[u8] = &[
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
 ];
 
 pub const SETUP_ITEMS: usize = 20;
