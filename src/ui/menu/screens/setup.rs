@@ -191,8 +191,9 @@ pub fn update_radio_setup(
     widgets::draw_footer(lcd, "[OK] Toggle/Cycle   [ESC] Back");
 }
 
-const MODE_STRS: [&str; 7] = [
+const MODE_STRS: [&str; 8] = [
     "DEFAULT",
+    "OFF",
     "2-POS",
     "3-POS",
     "6-POS",

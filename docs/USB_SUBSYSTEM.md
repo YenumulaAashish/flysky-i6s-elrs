@@ -249,8 +249,8 @@ Offset  13      : Vbat Warn Threshold
 Offset  14      : LCD Contrast
 Offset  15      : usb_mode (0: Off, 1: Joystick, 2: Serial, 3: Composite) <-- Default: 0 (Off)
 Offset  16..48  : Stick Calibrations (4 x 8B)
-Offset  48..108 : Aux Pot Calibrations (10 x 6B: SA..SD, VRA..VRB, VRC..VRF)
-Offset 108..140 : Hardware Extension, Input Mode, Telemetry, Trainer, & UI Config
+Offset  48..114 : Aux Pot Calibrations (11 x 6B: SA..SD, VRA..VRB, VRC..VRG)
+Offset 114..148 : Hardware Extension, Input Mode, Telemetry, Trainer, & UI Config
 ```
 
 ### Protocol Selection (`ModelConfig`)

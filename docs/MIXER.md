@@ -142,8 +142,8 @@ All 14 auxiliary channels (CH5 through CH18) can be independently assigned to an
 | **7..10** | `SA..SD` | Physical switches `SA`..`SD` (2-pos, 3-pos, 6-pos, or pot per `AdcInputMode`) | 988..2012 µs |
 | **31..32**| `SE..SF` | Rear tactile buttons `PA9`/`PA10` (when configured as `RC SW`) | UP: 988 µs / DN: 2012 µs |
 | **33..34**| `SG..SH` | Header `J4` tactile buttons `PA13`/`PA14` (when `J4 Mode` = `SG/SH BTN`) | UP: 988 µs / DN: 2012 µs |
-| **35..36**| `SWI..SWJ`| Extended switches on `PB6`/`PB7` (2-pos or 3-pos via `AdcInputMode`) | 988 / 1500 / 2012 µs |
-| **37..40**| `VRC..VRF`| Extended analog pots on `PC2..PC5` (when `Ext ADC (PC)` enabled) | 988..2012 µs |
+| **37..41**| `VRC..VRG`| Extended analog pots on `PC1..PC5` (when `Ext ADC (PC)` enabled) | 988..2012 µs |
+| **42..44**| `SWK..SWM`| Extended switches on `PC3..PC5` (when configured in switch mode) | 988 / 1500 / 2012 µs |
 
 ### Factory Default Auxiliary Mapping
 - `CH5`: **SA** (Arming switch / Flight mode)
@@ -216,12 +216,12 @@ A mix line can be gated by any hardware switch condition (0..22):
 - `SB^`, `SB-`, `SBv`: Active when switch `SB` is UP, MID, or DOWN.
 - `SC^`, `SC-`, `SCv`: Active when switch `SC` is UP, MID, or DOWN.
 - `SD^`, `SDv`: Active when switch `SD` is UP or DOWN.
-- `SE^`..`SWJv`: Active on secondary/expansion switches.
+- `SE^`..`SWMv`: Active on secondary/expansion switches.
 
 ### Dynamic Filtering of Sources and Switches
 The mixer UI dynamically queries the active hardware configuration (`RadioConfig`) and channel assignments (`ModelConfig`) to filter selection lists:
-- **Switches & Switch Conditions**: Only physical switches enabled in hardware are selectable. For example, `SE`/`SF` conditions only appear if `ext_switches` is enabled; `SG`/`SH` conditions only appear if `j4_sg_sh_en` is set; `SWI`/`SWJ` conditions only appear if `ext_adc` is enabled and those auxiliary channels are configured in switch mode.
-- **Pots & Sliders**: `VRA` and `VRB` only appear if their respective ADC channels are configured as potentiometers. `VRC`..`VRF` only appear when `ext_adc` is enabled with analog potentiometer mode.
+- **Switches & Switch Conditions**: Only physical switches enabled in hardware are selectable. For example, `SE`/`SF` conditions only appear if `ext_switches` is enabled; `SG`/`SH` conditions only appear if `j4_sg_sh_en` is set; `SWI`..`SWM` conditions only appear if `ext_adc` is enabled and those auxiliary channels are configured in switch mode.
+- **Pots & Sliders**: `VRA` and `VRB` only appear if their respective ADC channels are configured as potentiometers. `VRC`..`VRG` only appear when `ext_adc` is enabled with analog potentiometer mode.
 - **Channels**: Auxiliary channels `CH5`..`CH18` only appear in Source and Weight Modulation (`Wt Src`) selector lists if they are actively configured (mapped to an auxiliary input, driven by a wing template, or targeted by an active mixer rule). Unconfigured/unassigned channels are automatically skipped.
 
 ---

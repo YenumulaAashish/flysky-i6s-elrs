@@ -16,11 +16,11 @@ pub struct ConfiguredPot {
 }
 
 /// Dynamically collect all analog channels configured as potentiometers (continuous or detented).
-pub fn collect_configured_pots(storage: &RadioStorage) -> ([ConfiguredPot; 10], usize) {
+pub fn collect_configured_pots(storage: &RadioStorage) -> ([ConfiguredPot; 11], usize) {
     let ext_adc = storage.radio.ext_adc != 0;
-    let max_channels = if ext_adc { 10 } else { 6 };
-    let pot_names = ["A", "B", "C", "D", "V1", "V2", "V3", "V4", "V5", "V6"];
-    let mut pots = [ConfiguredPot { ch: 0, name: "" }; 10];
+    let max_channels = if ext_adc { 11 } else { 6 };
+    let pot_names = ["A", "B", "C", "D", "V1", "V2", "V3", "V4", "V5", "V6", "V7"];
+    let mut pots = [ConfiguredPot { ch: 0, name: "" }; 11];
     let mut count = 0;
 
     for (ch, &name) in pot_names.iter().enumerate().take(max_channels) {
@@ -144,11 +144,11 @@ pub fn render_default_layout(lcd: &mut St7567, state: &InputState, storage: &Rad
 
 /// Render the adaptive switch and pot layout (y = 46..53) based on dynamic channel mappings.
 pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &RadioStorage) {
-    let max_aux = if storage.radio.ext_adc != 0 { 10 } else { 6 };
+    let max_aux = if storage.radio.ext_adc != 0 { 11 } else { 6 };
     let mut sw_list: [(&str, crate::input::SwitchPos, bool, u8); 16] =
         [("", crate::input::SwitchPos::Up, false, 0); 16];
     let mut sw_count = 0usize;
-    let mut pot_vals = [0i16; 10];
+    let mut pot_vals = [0i16; 11];
     let mut pot_count = 0usize;
 
     for ch in 0..max_aux {
@@ -165,6 +165,7 @@ pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &Ra
                     7 => state.switches.swj,
                     8 => state.switches.swk,
                     9 => state.switches.swl,
+                    10 => state.switches.swm,
                     _ => {
                         let p = state.aux_pots[ch];
                         if p < -333 {
@@ -195,6 +196,7 @@ pub fn render_adaptive_layout(lcd: &mut St7567, state: &InputState, storage: &Ra
                     pot_count += 1;
                 }
             }
+            AdcInputMode::Off => {}
             AdcInputMode::Default => unreachable!(),
         }
     }
@@ -331,7 +333,7 @@ mod tests {
             pots: Default::default(),
             switches: Default::default(),
             battery_mv: 4200,
-            aux_pots: [0; 10],
+            aux_pots: [0; 11],
             raw: [2048; adc::NUM_CHANNELS],
         };
 
@@ -342,29 +344,29 @@ mod tests {
             })
         };
 
-        // 1. Default (6 pots VRA..VRF, 6 switches SA..SF)
+        // 1. Default (7 pots VRA..VRG, 6 switches SA..SF)
         let mut lcd1 = St7567::new();
         render_adaptive_layout(&mut lcd1, &state, &storage);
         let div1 = find_divider(&lcd1);
-        assert!(div1.is_some(), "Divider must separate 6 switches and 6 pots");
+        assert!(div1.is_some(), "Divider must separate 6 switches and 7 pots");
 
-        // 2. Extended channels as switches (2 pots, 10 switches)
-        for ch in 6..10 {
-            storage.radio.set_adc_mode_val(ch, 1);
+        // 2. Extended channels as switches (2 pots, 11 switches)
+        for ch in 6..11 {
+            storage.radio.set_adc_mode_val(ch, 2);
         }
         let mut lcd2 = St7567::new();
         render_adaptive_layout(&mut lcd2, &state, &storage);
         let div2 = find_divider(&lcd2);
-        assert!(div2.is_some(), "Divider must separate 10 switches and 2 pots");
+        assert!(div2.is_some(), "Divider must separate 11 switches and 2 pots");
 
-        // 3. Extended switches + SG/SH (2 pots, up to 12 switches)
+        // 3. Extended switches + SG/SH (2 pots, up to 13 switches)
         storage.radio.j4_sg_sh_en = 1;
         let mut lcd3 = St7567::new();
         render_adaptive_layout(&mut lcd3, &state, &storage);
         let div3 = find_divider(&lcd3);
         assert!(div3.is_some(), "Divider must separate switches and 2 pots");
 
-        // 4. 6 pots + up to 8 switches (VRA..VRF + SA..SH)
+        // 4. 7 pots + up to 8 switches (VRA..VRG + SA..SH)
         let mut storage4 = RadioStorage::default_factory();
         storage4.radio.ext_adc = 1;
         storage4.radio.ext_switches = 1;
@@ -372,6 +374,19 @@ mod tests {
         let mut lcd4 = St7567::new();
         render_adaptive_layout(&mut lcd4, &state, &storage4);
         let div4 = find_divider(&lcd4);
-        assert!(div4.is_some(), "Divider must separate switches and 6 pots");
+        assert!(div4.is_some(), "Divider must separate switches and 7 pots");
+
+        // 5. Some extended channels OFF (e.g. 2 active ext pots VRC/VRD, others OFF)
+        let mut storage5 = RadioStorage::default_factory();
+        storage5.radio.ext_adc = 1;
+        storage5.radio.ext_switches = 1;
+        // PC1, PC2 are Pot (Default). Turn PC3, PC4, PC5 OFF (1 = Off)
+        storage5.radio.set_adc_mode_val(8, 1);
+        storage5.radio.set_adc_mode_val(9, 1);
+        storage5.radio.set_adc_mode_val(10, 1);
+        let mut lcd5 = St7567::new();
+        render_adaptive_layout(&mut lcd5, &state, &storage5);
+        let div5 = find_divider(&lcd5);
+        assert!(div5.is_some(), "Divider must separate 6 switches and 4 active pots");
     }
 }

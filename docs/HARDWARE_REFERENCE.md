@@ -200,9 +200,9 @@ The STM32F072 contains a factory-programmed DFU bootloader in System ROM (`0x1FF
 
 ## 7. Analog Inputs & ADC1 Channel Map (`src/hw/adc.rs`)
 
-The FlySky FS-i6S uses a single 12-bit ADC peripheral (**ADC1**) paired with **DMA1 Channel 1** operating in circular mode to continuously scan 11 standard analog channels (`0x07FF`, or 15 channels `0xF7FF` when `Ext ADC (PC)` is enabled) into SRAM without CPU intervention.
+The FlySky FS-i6S uses a single 12-bit ADC peripheral (**ADC1**) paired with **DMA1 Channel 1** operating in circular mode to continuously scan 11 standard analog channels (`0x07FF`, or 16 channels `0xFFFF` when `Ext ADC (PC)` is enabled) into SRAM without CPU intervention.
 
-### Verified 11-Channel Standard Mapping + 4 Extended Channels (`PC2..PC5`)
+### Verified 11-Channel Standard Mapping + 5 Extended Channels (`PC1..PC5`)
 
 | ADC Ch | MCU Pin | Function / Axis | Physical Input | Normal Expected Range | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -217,10 +217,11 @@ The FlySky FS-i6S uses a single 12-bit ADC peripheral (**ADC1**) paired with **D
 | **CH8** | `PB0` | **Switch SC** | 3-Position Toggle (Stock) | Up > 2500, Mid 1000..2500, Dwn < 1000 | Configurable via `AdcInputMode` |
 | **CH9** | `PB1` | **Switch SD** | 2-Position Toggle (Stock) | Down < 2000, Up > 2000 | Configurable via `AdcInputMode` |
 | **CH10**| `PC0` | **Battery Sense** | 4×AA Battery Pack | ~1400 .. 2100 (4.0V .. 6.0V) | $10\text{ k}\Omega / 5.1\text{ k}\Omega$ divider |
-| **CH12**| `PC2` | **Ext Analog VRC / SWI**| `ADC_IN12` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
-| **CH13**| `PC3` | **Ext Analog VRD / SWJ**| `ADC_IN13` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
-| **CH14**| `PC4` | **Ext Analog VRE / SWK**| `ADC_IN14` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
-| **CH15**| `PC5` | **Ext Analog VRF / SWL**| `ADC_IN15` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
+| **CH11**| `PC1` | **Ext Analog VRC / SWI**| `ADC_IN11` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
+| **CH12**| `PC2` | **Ext Analog VRD / SWJ**| `ADC_IN12` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
+| **CH13**| `PC3` | **Ext Analog VRE / SWK**| `ADC_IN13` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
+| **CH14**| `PC4` | **Ext Analog VRF / SWL**| `ADC_IN14` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
+| **CH15**| `PC5` | **Ext Analog VRG / SWM**| `ADC_IN15` Expansion | 0 .. 4095 | Enabled via `Ext ADC (PC)` |
 
 ### Battery Voltage Sensing (FS-i6S Scaling)
 

@@ -25,9 +25,9 @@ pub enum CalibStep {
 
 pub struct CalibWizard {
     pub step: CalibStep,
-    centers: [u16; 10], // 0..3: Sticks; 4..5: Stock Pots; 6..9: Ext Pots (P7)
-    mins: [u16; 10],
-    maxs: [u16; 10],
+    centers: [u16; 11], // 0..3: Sticks; 4..5: Stock Pots; 6..10: Ext Pots (PC1..PC5)
+    mins: [u16; 11],
+    maxs: [u16; 11],
     prev_keys: u16,
     waiting_release: bool,
     timer_ms: u16,
@@ -43,9 +43,9 @@ impl CalibWizard {
     pub const fn new() -> Self {
         Self {
             step: CalibStep::Inactive,
-            centers: [2048; 10],
-            mins: [4095; 10],
-            maxs: [0; 10],
+            centers: [2048; 11],
+            mins: [4095; 11],
+            maxs: [0; 11],
             prev_keys: 0xFFFF,
             waiting_release: false,
             timer_ms: 0,
@@ -55,9 +55,9 @@ impl CalibWizard {
     /// Start the calibration wizard.
     pub fn start(&mut self, buzzer: &mut Buzzer) {
         self.step = CalibStep::Center;
-        self.centers = [2048; 10];
-        self.mins = [4095; 10];
-        self.maxs = [0; 10];
+        self.centers = [2048; 11];
+        self.mins = [4095; 11];
+        self.maxs = [0; 11];
         self.prev_keys = 0xFFFF; // Block any immediate edge trigger
         self.waiting_release = true; // User must release OK before proceeding
         self.timer_ms = 0;
@@ -300,9 +300,9 @@ impl CalibWizard {
 fn draw_calib_pots(
     lcd: &mut St7567,
     configured_pots: &[ConfiguredPot],
-    centers: &[u16; 10],
-    mins: &[u16; 10],
-    maxs: &[u16; 10],
+    centers: &[u16; 11],
+    mins: &[u16; 11],
+    maxs: &[u16; 11],
     raw_adc: &[u16; adc::NUM_CHANNELS],
 ) {
     let count = configured_pots.len();

@@ -315,14 +315,14 @@ Interactive curve engine with real-time on-screen curve visualization (49 x 37 p
 - **Diff:** (When Elevon or Flaperon active): Adjust surface differential ratio (-100%..+100%).
 - **Freeform Mix Lines (`M01` .. `M32`)**: Press **`[OK]`** on any of the 32 matrix mixer lines to open `EDIT MIX 01`..`EDIT MIX 32`:
   - **Target**: Output channel (`CH1`..`CH18` or `Disabled`).
-  - **Source**: Control source (`Roll`, `Pitch`, `Thr`, `Yaw`, `VRA`, `VRB`, `SA..SD`, `MAX`, `CH1..CH18`, `Thr+`, `SE..SWJ`, `VRC..VRF`). *Dynamically filtered: only hardware-configured switches, pots, and active channels appear in selection list.*
+  - **Source**: Control source (`Roll`, `Pitch`, `Thr`, `Yaw`, `VRA`, `VRB`, `SA..SD`, `MAX`, `CH1..CH18`, `Thr+`, `SE..SWM`, `VRC..VRG`). *Dynamically filtered: only hardware-configured switches, pots, and active channels appear in selection list.*
   - **Wt Src** (Weight Modulation Source): `Fixed` (direct weight gain), `CH1`..`CH18` (bipolar -100%..+100% modulation by channel or knob), or `CH1+`..`CH18+` (unipolar 0..100% modulation). *Dynamically filtered to active channels.*
   - **Weight / Offset**: Percentage scaling (-100%..+100%).
-  - **Switch**: Activation condition (`ON`, `SA^`..`SWJv`). *Dynamically filtered: only available physical switches are shown.*
+  - **Switch**: Activation condition (`ON`, `SA^`..`SWMv`). *Dynamically filtered: only available physical switches are shown.*
   - **Mode**: Multiplex method (`ADD (+)`, `MULT (*)`, `REPL (:=)`).
 
 ### Submenu 6: Auxiliary Channels (`AUX CHANNELS`)
-Assigns physical controls (switches `SA..SD`, pots `VRA/VRB`, modded `SE/SF` and `VRC..VRF`, sticks, or `None`) to channels `CH5` through `CH18`. Selection lists dynamically skip unconfigured expansion hardware.
+Assigns physical controls (switches `SA..SD`, pots `VRA/VRB`, modded `SE/SF` and `VRC..VRG`, sticks, or `None`) to channels `CH5` through `CH18`. Selection lists dynamically skip unconfigured expansion hardware.
 
 ### Submenu 7: Channel Reverse (`CH REVERSE`)
 - Lists all 18 channels (CH1:ROL, CH2:PIT, CH3:THR, CH4:YAW, SwA..SwD, VR1, VR2, CH11..CH18).
@@ -345,12 +345,12 @@ The Radio Setup menu features a scrollable 4-item viewport with 9px row heights 
   - **`SERIAL`**: Virtual COM Port (CDC-ACM) at 115200 baud streaming live JSON telemetry while maintaining normal RF transmission.
   - **`COMPOSITE`**: Simultaneous HID Gamepad + CDC-ACM Virtual COM Port.
 - **`PC13 Pwr:`**: Configures external module power polarity on `PC13`: `HIGH (N)` (default active-HIGH for N-channel MOSFET switches) or `LOW (P)` (active-LOW for P-channel MOSFET switches).
-- **`Ext Sw:`**: Toggles auxiliary hardware switches SE and SF on pins `PC12` and `PC15` (`OFF` or `PC12+PC15`).
-- **`P7 Header:`**: Toggles autonomous 15-channel ADC scanning for auxiliary inputs AD12..AD15 on Header P7 (`OFF` or `AD12-AD15`).
+- **`Ext ADC (PC):`**: Toggles autonomous 16-channel ADC scanning for auxiliary inputs on pins `PC1` through `PC5` (`ADC_IN11`..`ADC_IN15`) (`DISABLED` or `ENABLED`).
 - **`Stick Mode:`**: Selects gimbal stick mode configuration: **`MODE 1`** (Throttle/Roll right, Pitch/Yaw left), **`MODE 2`** (Throttle/Yaw left, Pitch/Roll right—default), **`MODE 3`** (Pitch/Roll left, Throttle/Yaw right), or **`MODE 4`** (Pitch/Yaw right, Throttle/Roll left). Directly controls channel mapping for preflight throttle safety checks and flight controls.
-- **`Inputs:`**: Opens the **Input Setup** (`INPUT SETUP`) sub-screen to configure the input decoding modes for all 10 auxiliary analog channels individually:
-  - Channels: `SA (PA4)`, `SB (PA5)`, `SC (PB0)`, `SD (PB1)`, `VRA (PA6)`, `VRB (PA7)`, and Header P7 inputs `VRC (P7)`, `VRD (P7)`, `VRE (P7)`, `VRF (P7)`.
-  - Modes: **`DEFAULT`**, **`2-POS`**, **`3-POS`**, **`6-POS`**, **`POT`**, and **`POT-D`** (Pot with center detent click).
+- **`Inputs:`**: Opens the **Input Setup** (`INPUT MODES`) sub-screen to configure the input decoding modes for all 11 auxiliary analog channels individually:
+  - Channels: `SA (PA4)`, `SB (PA5)`, `SC (PB0)`, `SD (PB1)`, `VRA (PA6)`, `VRB (PA7)`, and Expansion inputs `VRC (PC1)`, `VRD (PC2)`, `VRE (PC3)`, `VRF (PC4)`, `VRG (PC5)`.
+  - Modes: **`DEFAULT`**, **`OFF`**, **`2-POS`**, **`3-POS`**, **`6-POS`**, **`POT`**, **`POT-D`** (Pot with center detent click), and **`INST-TRIM`**.
+  - **Selective Pin Disabling (`OFF`)**: If only a subset of the 5 expansion inputs are wired (e.g. only PC1 and PC2), setting unused inputs to **`OFF`** cleanly filters them out of all mixer sources, switches, auxiliary channel mappings, dual rates, timers, and flight dashboard widgets.
   - Toggling immediately reapplies calibration, adjusts the main flight dashboard layout dynamically, and enables center acoustic clicks when `POT-D` is selected.
 - **`PPM Out:`**: Configures 8-channel CPPM trainer frame output on `PF10` (`TIM15_CH2`): `OFF` or `ON (PF10)`. Mutually exclusive with `Trainer In`.
 - **`Trainer In:`**: Configures CPPM student trainer input capture on `PF9` (`TIM15_CH1`): `OFF` or `ON (SD DN)`. When enabled and a valid student PPM stream is received (< 100 ms age), holding **`SD` Down (`SDv`)** overrides primary flight controls (`CH1..CH4`). Mutually exclusive with `PPM Out`.
@@ -391,7 +391,7 @@ Launches the interactive 2-step calibration wizard (see Section 6 below), automa
   - **Page 1 (`ANALOG (1-6)`)**: Stick gimbals & switches: `RH:AIL`, `RV:ELE`, `LV:THR`, `LH:RUD`, `SW:SA`, `SW:SB`.
   - **Page 2 (`ANALOG (7-11)`)**: Rotary pots, switches, & battery: `POT:V1`, `POT:V2`, `SW:SC`, `SW:SD`, `VBAT`.
   - **Page 3 (`EXT SWITCHES (SE/SF)`)**: Modded auxiliary toggle switches SE (`PC12`) and SF (`PC15`) showing live digital high/low state and configuration status.
-  - **Page 4 (`EXT ANALOG (P7)`)**: Auxiliary analog channels `VRC:AD12`, `VRD:AD13`, `VRE:AD14`, and `VRF:AD15` on Header P7 with fill bars and raw ADC counts.
+  - **Page 4 (`EXT ANALOG (PC1-5)`)**: Modded auxiliary analog channels `VRC:PC1`, `VRD:PC2`, `VRE:PC3`, `VRF:PC4`, and `VRG:PC5` with 40-pixel graphic fill bars and live raw ADC counts (0..4095). Inputs set to `OFF` in Input Setup are explicitly labeled `OFF` with empty gauges.
 - Press **`[UP]`** / **`[DOWN]`** to cycle through the diagnostic pages.
 - Press **`[CANCEL]` (`[ESC]`)** to return to the Main Menu.
 

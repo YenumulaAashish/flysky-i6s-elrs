@@ -146,14 +146,7 @@ impl FlightPipeline {
             controls.elevator,
             thr_curved,
             controls.rudder,
-            &[
-                state.aux_pots[4],
-                state.aux_pots[5],
-                state.aux_pots[6],
-                state.aux_pots[7],
-                state.aux_pots[8],
-                state.aux_pots[9],
-            ],
+            &state.aux_pots[4..],
             &state.switches,
             active_model,
             trims,
@@ -231,8 +224,8 @@ impl FlightPipeline {
 /// Background idle and UI context: tracks inactivity, backlight timers, user input, and screen rendering.
 struct BackgroundIdleManager {
     prev_stick_samples: [u16; 6],
-    prev_pots: [i16; 6],
-    pot_center_armed: [bool; 6],
+    prev_pots: [i16; 7],
+    pot_center_armed: [bool; 7],
     prev_switches: input::Switches,
     prev_bind_key: bool,
     bind_hold_ms: u32,
@@ -279,6 +272,7 @@ impl BackgroundIdleManager {
                 init_state.aux_pots[7],
                 init_state.aux_pots[8],
                 init_state.aux_pots[9],
+                init_state.aux_pots[10],
             ],
             pot_center_armed: [
                 init_state.aux_pots[4].abs() >= 40,
@@ -287,6 +281,7 @@ impl BackgroundIdleManager {
                 init_state.aux_pots[7].abs() >= 40,
                 init_state.aux_pots[8].abs() >= 40,
                 init_state.aux_pots[9].abs() >= 40,
+                init_state.aux_pots[10].abs() >= 40,
             ],
             prev_switches: init_state.switches,
             prev_bind_key: bind_on_boot,
@@ -350,11 +345,11 @@ impl BackgroundIdleManager {
         }
         self.menu_was_active = menu_active;
 
-        // Pot Center Crossing Haptic/Audio Feedback (VRA..VRF)
+        // Pot Center Crossing Haptic/Audio Feedback (VRA..VRG)
         // Only active for continuous potentiometers (AdcInputMode::Pot).
         // Detented pots (POT-D) and spring-loaded wheels (Default) do NOT beep on center.
         // Hysteresis deadband: arms when outside ±40, beeps once upon entering ±20.
-        let max_pot = if storage.radio.ext_adc != 0 { 6 } else { 2 };
+        let max_pot = if storage.radio.ext_adc != 0 { 7 } else { 2 };
         for idx in 0..max_pot {
             let curr = flight.state.aux_pots[idx + 4];
             let mode = storage.radio.get_adc_mode(idx + 4);
@@ -491,23 +486,12 @@ impl BackgroundIdleManager {
 
         // 7. Instant Trim Evaluation: Check if any auxiliary channel configured as InstantTrim went active
         let mut instant_trim_active = false;
-        let max_adc = if storage.radio.ext_adc != 0 { 10 } else { 6 };
+        let max_adc = if storage.radio.ext_adc != 0 { 11 } else { 6 };
         for ch in 0..max_adc {
             let mode = storage::AdcInputMode::resolve(ch, storage.radio.adc_modes[ch]);
             if matches!(mode, storage::AdcInputMode::InstantTrim) {
                 // Active when switch is toggled down (raw reading > 2048)
-                let raw_val = flight.state.raw[match ch {
-                    0 => 4,
-                    1 => 5,
-                    2 => 8,
-                    3 => 9,
-                    4 => 6,
-                    5 => 7,
-                    6 => 11,
-                    7 => 12,
-                    8 => 13,
-                    _ => 14,
-                }];
+                let raw_val = flight.state.raw[crate::input::aux_index_to_raw_adc(ch)];
                 if raw_val >= 2048 {
                     instant_trim_active = true;
                     break;

@@ -172,6 +172,12 @@ pub fn is_switch_active(condition: u8, switches: &Switches) -> bool {
         20 => switches.swi == SwitchPos::Down,
         21 => switches.swj == SwitchPos::Up,
         22 => switches.swj == SwitchPos::Down,
+        23 => switches.swk == SwitchPos::Up,
+        24 => switches.swk == SwitchPos::Down,
+        25 => switches.swl == SwitchPos::Up,
+        26 => switches.swl == SwitchPos::Down,
+        27 => switches.swm == SwitchPos::Up,
+        28 => switches.swm == SwitchPos::Down,
         _ => true,
     }
 }
@@ -317,6 +323,22 @@ pub fn evaluate_source(
         38 => pots.get(3).copied().unwrap_or(0) as i32, // VRD
         39 => pots.get(4).copied().unwrap_or(0) as i32, // VRE
         40 => pots.get(5).copied().unwrap_or(0) as i32, // VRF
+        41 => pots.get(6).copied().unwrap_or(0) as i32, // VRG
+        42 => match switches.swk {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        43 => match switches.swl {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
+        44 => match switches.swm {
+            SwitchPos::Up => MIXER_MIN as i32,
+            SwitchPos::Mid => MIXER_CENTER as i32,
+            SwitchPos::Down => MIXER_MAX as i32,
+        },
         _ => MIXER_CENTER as i32,
     }
 }
@@ -575,6 +597,7 @@ mod tests {
             swj: SwitchPos::Down,
             swk: SwitchPos::Up,
             swl: SwitchPos::Down,
+            swm: SwitchPos::Up,
         };
 
         assert!(is_switch_active(0, &switches), "Switch 0 is always active");
@@ -600,12 +623,18 @@ mod tests {
         assert!(!is_switch_active(20, &switches), "SWI Down");
         assert!(!is_switch_active(21, &switches), "SWJ Up");
         assert!(is_switch_active(22, &switches), "SWJ Down");
+        assert!(is_switch_active(23, &switches), "SWK Up");
+        assert!(!is_switch_active(24, &switches), "SWK Down");
+        assert!(!is_switch_active(25, &switches), "SWL Up");
+        assert!(is_switch_active(26, &switches), "SWL Down");
+        assert!(is_switch_active(27, &switches), "SWM Up");
+        assert!(!is_switch_active(28, &switches), "SWM Down");
     }
 
     #[test]
-    fn test_mixer_sources_se_sf_and_vrc_vrf() {
+    fn test_mixer_sources_se_sf_and_vrc_vrg() {
         let cond_sticks = [0i16; 4];
-        let pots = [100i16, 200i16, -500i16, 750i16, -1000i16, 1000i16];
+        let pots = [100i16, 200i16, -500i16, 750i16, -1000i16, 1000i16, 333i16];
         let channels = [0i32; NUM_CHANNELS];
 
         let mut switches = Switches::DEFAULT;
@@ -617,11 +646,12 @@ mod tests {
         // Source 32 (SF): Down -> MIXER_MAX (1000)
         assert_eq!(evaluate_source(32, &cond_sticks, &pots, &switches, &channels), MIXER_MAX as i32);
 
-        // Sources 37..40: VRC..VRF (pots[2..6])
+        // Sources 37..41: VRC..VRG (pots[2..7])
         assert_eq!(evaluate_source(37, &cond_sticks, &pots, &switches, &channels), -500);
         assert_eq!(evaluate_source(38, &cond_sticks, &pots, &switches, &channels), 750);
         assert_eq!(evaluate_source(39, &cond_sticks, &pots, &switches, &channels), -1000);
         assert_eq!(evaluate_source(40, &cond_sticks, &pots, &switches, &channels), 1000);
+        assert_eq!(evaluate_source(41, &cond_sticks, &pots, &switches, &channels), 333);
 
         switches.se = SwitchPos::Down;
         switches.sf = SwitchPos::Up;

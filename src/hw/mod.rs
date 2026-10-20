@@ -41,23 +41,24 @@ pub const STATUS_BANNER: &[u8] = concat!(
 .as_bytes();
 pub const CRSF_UART_STATUS: &[u8] = b"Protocol: CRSF / ExpressLRS (USART1 PB6/PB7 active)\r\n";
 
-pub const AUX_NAMES: [&str; 10] = [
+pub const AUX_NAMES: [&str; 11] = [
     "SA (PA4):",
     "SB (PA5):",
     "SC (PB0):",
     "SD (PB1):",
     "VRA (PA6):",
     "VRB (PA7):",
-    "VRC (PC2):",
-    "VRD (PC3):",
-    "VRE (PC4):",
-    "VRF (PC5):",
+    "VRC (PC1):",
+    "VRD (PC2):",
+    "VRE (PC3):",
+    "VRF (PC4):",
+    "VRG (PC5):",
 ];
 
-pub const ADAPTIVE_CH_NAMES: [&str; 10] = ["A", "B", "C", "D", "1", "2", "I", "J", "K", "L"];
+pub const ADAPTIVE_CH_NAMES: [&str; 11] = ["A", "B", "C", "D", "1", "2", "I", "J", "K", "L", "M"];
 
 pub const AUX_SOURCES: &[u8] = &[
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
 ];
 
 pub const SETUP_ITEMS: usize = 20;
@@ -140,13 +141,13 @@ pub fn calculate_battery_mv(raw: u16) -> u16 {
     vbat_mv as u16
 }
 
-/// Decode board-specific switches (SE..SWL) from raw ADC and GPIO states.
+/// Decode board-specific switches (SE..SWM) from raw ADC and GPIO states.
 #[inline]
 pub fn decode_board_switches(
     raw: &[u16; adc::NUM_CHANNELS],
     _ext_switches: bool,
     ext_adc: bool,
-    adc_modes: &[u8; 10],
+    adc_modes: &[u8; 11],
 ) -> (
     SwitchPos,
     SwitchPos,
@@ -156,8 +157,9 @@ pub fn decode_board_switches(
     SwitchPos,
     SwitchPos,
     SwitchPos,
+    SwitchPos,
 ) {
-    let (swi, swj, swk, swl) = if ext_adc {
+    let (swi, swj, swk, swl, swm) = if ext_adc {
         let swi = match AdcInputMode::resolve(6, adc_modes[6]) {
             AdcInputMode::ThreePos => crate::input::decode_switch_3pos(raw[11]),
             AdcInputMode::TwoPos => crate::input::decode_switch_2pos(raw[11]),
@@ -178,9 +180,20 @@ pub fn decode_board_switches(
             AdcInputMode::TwoPos => crate::input::decode_switch_2pos(raw[14]),
             _ => SwitchPos::Up,
         };
-        (swi, swj, swk, swl)
+        let swm = match AdcInputMode::resolve(10, adc_modes[10]) {
+            AdcInputMode::ThreePos => crate::input::decode_switch_3pos(raw[15]),
+            AdcInputMode::TwoPos => crate::input::decode_switch_2pos(raw[15]),
+            _ => SwitchPos::Up,
+        };
+        (swi, swj, swk, swl, swm)
     } else {
-        (SwitchPos::Up, SwitchPos::Up, SwitchPos::Up, SwitchPos::Up)
+        (
+            SwitchPos::Up,
+            SwitchPos::Up,
+            SwitchPos::Up,
+            SwitchPos::Up,
+            SwitchPos::Up,
+        )
     };
 
     (
@@ -192,6 +205,7 @@ pub fn decode_board_switches(
         swj,
         swk,
         swl,
+        swm,
     )
 }
 
@@ -199,7 +213,7 @@ pub fn decode_board_switches(
 #[inline]
 pub fn input_setup_items(storage: &RadioStorage) -> usize {
     if storage.radio.ext_adc != 0 {
-        10
+        11
     } else {
         6
     }
@@ -467,7 +481,7 @@ pub fn diag_page_title(page_idx: usize) -> &'static str {
         0 => "ANALOG (1-6)",
         1 => "ANALOG (7-11)",
         2 => "SWITCHES (E/F/G/H)",
-        _ => "EXT ANALOG (PC2-5)",
+        _ => "EXT ANALOG (PC1-5)",
     }
 }
 
@@ -502,20 +516,21 @@ pub fn draw_diag_ext_page(
     } else {
         let ext_active = crate::input::is_ext_adc_enabled();
         let cfg_label = if ext_active {
-            "PC ADC: ENABLED (15-CH)"
+            "PC ADC: ENABLED (16-CH)"
         } else {
             "PC ADC: DISABLED (OFF)"
         };
         lcd.draw_str_4x6(2, 13, cfg_label, false);
 
-        let names: [&str; 4] = ["VRC:PC2 ", "VRD:PC3 ", "VRE:PC4 ", "VRF:PC5 "];
+        let names: [&str; 5] = ["VRC:PC1 ", "VRD:PC2 ", "VRE:PC3 ", "VRF:PC4 ", "VRG:PC5 "];
         for (i, &name) in names.iter().enumerate() {
             let adc_idx = 11 + i;
-            let y = 25 + (i as i32 * 7);
+            let y = 23 + (i as i32 * 8);
             lcd.draw_str_4x6(2, y, name, false);
 
+            let is_off = crate::input::get_adc_mode(6 + i).is_off();
             let raw = raw_adc[adc_idx].min(4095);
-            let fill_w = if ext_active {
+            let fill_w = if ext_active && !is_off {
                 ((raw as u32 * 38) / 4095).min(38)
             } else {
                 0
@@ -523,7 +538,7 @@ pub fn draw_diag_ext_page(
             widgets::draw_bar_gauge(lcd, 44, y + 1, 40, 5, fill_w);
 
             let mut val_buf = [0u8; 4];
-            if ext_active {
+            if ext_active && !is_off {
                 u16_to_dec_4(raw, &mut val_buf);
             } else {
                 val_buf = *b" OFF";

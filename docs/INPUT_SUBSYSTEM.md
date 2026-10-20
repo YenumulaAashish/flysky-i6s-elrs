@@ -21,10 +21,11 @@ The autonomous `ADC1` scanner digitizes 11 standard channels (`0x07FF`) or 15 ch
 | **8** | `PB0` | **Switch SC** (Default: 3-Pos) | UP (-1000) / MID (0 / 1500 µs) / DOWN (+1000) |
 | **9** | `PB1` | **Switch SD** (Default: 2-Pos) | UP (-1000 / 988 µs) / DOWN (+1000 / 2012 µs) |
 | **10** | `PC0` | **Battery Voltage Sense** | $10\text{ k}\Omega / 5.1\text{ k}\Omega$ divider: `(raw * 977064) / 409500` mV |
-| **11** | `PC2` | **Ext Analog VRC / SWI** (`ADC_IN12`)| Left (-1000) .. Right (+1000) or Switch `SWI` |
-| **12** | `PC3` | **Ext Analog VRD / SWJ** (`ADC_IN13`)| Left (-1000) .. Right (+1000) or Switch `SWJ` |
-| **13** | `PC4` | **Ext Analog VRE / SWK** (`ADC_IN14`)| Left (-1000) .. Right (+1000) or Switch `SWK` |
-| **14** | `PC5` | **Ext Analog VRF / SWL** (`ADC_IN15`)| Left (-1000) .. Right (+1000) or Switch `SWL` |
+| **11** | `PC1` | **Ext Analog VRC / SWI** (`ADC_IN11`)| Left (-1000) .. Right (+1000) or Switch `SWI` |
+| **12** | `PC2` | **Ext Analog VRD / SWJ** (`ADC_IN12`)| Left (-1000) .. Right (+1000) or Switch `SWJ` |
+| **13** | `PC3` | **Ext Analog VRE / SWK** (`ADC_IN13`)| Left (-1000) .. Right (+1000) or Switch `SWK` |
+| **14** | `PC4` | **Ext Analog VRF / SWL** (`ADC_IN14`)| Left (-1000) .. Right (+1000) or Switch `SWL` |
+| **15** | `PC5` | **Ext Analog VRG / SWM** (`ADC_IN15`)| Left (-1000) .. Right (+1000) or Switch `SWM` |
 
 ### Stick Mode Remapping (Mode 1 .. Mode 4)
 Physical gimbals (`rh`, `rv`, `lv`, `lh`) are decoupled from logical primary flight controls (`aileron`, `elevator`, `throttle`, `rudder`) based on `Radio Setup -> Stick Mode:`:
@@ -37,17 +38,18 @@ Physical gimbals (`rh`, `rv`, `lv`, `lh`) are decoupled from logical primary fli
 
 ## 2. Universal Configurable ADC Input Modes (`AdcInputMode`)
 
-All 10 auxiliary analog inputs (`SA..SD`, `VRA..VRB`, and extended `VRC..VRF` on `PC2..PC5`) can be individually configured in **`Radio Setup -> Inputs` (`INPUT MODES`)**:
+All 11 auxiliary analog inputs (`SA..SD`, `VRA..VRB`, and extended `VRC..VRG` on `PC1..PC5`) can be individually configured in **`Radio Setup -> Inputs` (`INPUT MODES`)**:
 
 | Mode Value | Enum Variant | UI Label | Behavior |
 | :---: | :--- | :--- | :--- |
-| **`0`** | `AdcInputMode::Default` | `DEFAULT` | Uses stock hardware assignment (`SA`/`SD` = 2-Pos, `SB`/`SC` = 3-Pos, `VRA`..`VRF` = Pot) |
-| **`1`** | `AdcInputMode::TwoPos` | `2-POS` | 2-position switch (`< 2048` -> Down `+1000`, `>= 2048` -> Up `-1000`) |
-| **`2`** | `AdcInputMode::ThreePos` | `3-POS` | 3-position switch (`> 3000` -> Up `-1000`, `1000..=3000` -> Mid `0`, `< 1000` -> Down `+1000`) |
-| **`3`** | `AdcInputMode::SixPos` | `6-POS` | 6-position flight mode resistor ladder switch (`1..6`, scaled uniformly across `-1000..+1000`) |
-| **`4`** | `AdcInputMode::Pot` | `POT` | Continuous potentiometer/slider without center detent (midpoint `(min + max) / 2`) |
-| **`5`** | `AdcInputMode::PotDetent` | `POT-D` | Continuous potentiometer with calibrated center detent and acoustic center-crossing click (`2200 Hz`, 10 ms) |
-| **`6`** | `AdcInputMode::InstantTrim`| `INST-TRIM`| Momentary switch triggering 3-axis Instant Trim capture on downward edge |
+| **`0`** | `AdcInputMode::Default` | `DEFAULT` | Uses stock hardware assignment (`SA`/`SD` = 2-Pos, `SB`/`SC` = 3-Pos, `VRA`..`VRG` = Pot) |
+| **`1`** | `AdcInputMode::Off` | `OFF` | Disables input: filtered out of mixer sources, switches, aux channels, dual rates, timers, and flight dashboard |
+| **`2`** | `AdcInputMode::TwoPos` | `2-POS` | 2-position switch (`< 2048` -> Down `+1000`, `>= 2048` -> Up `-1000`) |
+| **`3`** | `AdcInputMode::ThreePos` | `3-POS` | 3-position switch (`> 3000` -> Up `-1000`, `1000..=3000` -> Mid `0`, `< 1000` -> Down `+1000`) |
+| **`4`** | `AdcInputMode::SixPos` | `6-POS` | 6-position flight mode resistor ladder switch (`1..6`, scaled uniformly across `-1000..+1000`) |
+| **`5`** | `AdcInputMode::Pot` | `POT` | Continuous potentiometer/slider without center detent (midpoint `(min + max) / 2`) |
+| **`6`** | `AdcInputMode::PotDetent` | `POT-D` | Continuous potentiometer with calibrated center detent and acoustic center-crossing click (`2200 Hz`, 10 ms) |
+| **`7`** | `AdcInputMode::InstantTrim`| `INST-TRIM`| Momentary switch triggering 3-axis Instant Trim capture on downward edge |
 
 ---
 

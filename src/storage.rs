@@ -82,23 +82,25 @@ impl PotCalib {
 pub enum AdcInputMode {
     #[default]
     Default = 0,
-    TwoPos = 1,
-    ThreePos = 2,
-    SixPos = 3,
-    Pot = 4,
-    PotDetent = 5,
-    InstantTrim = 6,
+    Off = 1,
+    TwoPos = 2,
+    ThreePos = 3,
+    SixPos = 4,
+    Pot = 5,
+    PotDetent = 6,
+    InstantTrim = 7,
 }
 
 impl AdcInputMode {
     pub fn from_u8(val: u8) -> Self {
         match val {
-            1 => Self::TwoPos,
-            2 => Self::ThreePos,
-            3 => Self::SixPos,
-            4 => Self::Pot,
-            5 => Self::PotDetent,
-            6 => Self::InstantTrim,
+            1 => Self::Off,
+            2 => Self::TwoPos,
+            3 => Self::ThreePos,
+            4 => Self::SixPos,
+            5 => Self::Pot,
+            6 => Self::PotDetent,
+            7 => Self::InstantTrim,
             _ => Self::Default,
         }
     }
@@ -113,7 +115,12 @@ impl AdcInputMode {
         matches!(self, Self::PotDetent)
     }
 
-    /// Resolve effective mode for a given channel index (0..3: SA..SD, 4..5: VRA..VRB, 6..9: VRC..VRF)
+    /// Check if this input is disabled / turned off.
+    pub fn is_off(&self) -> bool {
+        matches!(self, Self::Off)
+    }
+
+    /// Resolve effective mode for a given channel index (0..3: SA..SD, 4..5: VRA..VRB, 6..10: VRC..VRG)
     pub fn resolve(channel_idx: usize, mode_val: u8) -> Self {
         let mode = Self::from_u8(mode_val);
         if mode != Self::Default {
@@ -125,7 +132,7 @@ impl AdcInputMode {
             1 => crate::hw::DEFAULT_SB_MODE, // SB (2-pos stock on i6X, 3-pos stock on i6S)
             2 => Self::ThreePos,             // SC (3-pos stock)
             3 => Self::TwoPos,               // SD (2-pos stock)
-            _ => Self::Pot,                  // VRA, VRB, VRC, VRD, VRE, VRF (Pots stock)
+            _ => Self::Pot,                  // VRA..VRG (Pots stock)
         }
     }
 }
@@ -145,24 +152,24 @@ pub struct RadioConfig {
     pub lcd_contrast: u8,          // 14 (15..55, default 37 / 0x25)
     pub usb_mode: u8,              // 15 (0: Off, 1: Joystick, 2: Serial, 3: Composite)
     pub sticks: [ChannelCalib; 4], // 16..48 (32 bytes: Roll, Pitch, Throttle, Yaw)
-    pub aux_pots: [PotCalib; 10],  // 48..108 (60 bytes: SA..SD, VRA..VRB, VRC..VRF)
-    pub ext_module_pwr: u8,        // 108 (0: Active HIGH / N-type, 1: Active LOW / P-type)
-    pub tone_style: u8,            // 109 (0: Simple / Standard, 1: Rich / Melodic)
-    pub servo_rate_hz: u16,        // 110..112 (50..400 Hz, default 50 Hz for analog servo safety)
-    pub rx_out_mode: u8,           // 112 (0: PWM, 1: PPM, default 0)
-    pub rx_serial_proto: u8,       // 113 (0: i-BUS, 1: S.BUS, default 0)
-    pub ext_switches: u8,          // 114 (0: Disabled, 1: Enabled / PC12+PC15)
-    pub ext_adc: u8,               // 115 (0: Disabled, 1: Enabled / Header P7 AD12-AD15 or PC2-PC5)
-    pub adc_modes: [u8; 10],       // 116..126: Input modes for the 10 auxiliary analog channels
-    pub stick_mode: u8,            // 126 (0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4)
-    pub telem_slots: [u8; 4],      // 127..131: Configurable telemetry dashboard sensor slots (1..4)
-    pub trainer_config: u8,        // 131: Bit 0: PPM Out on PF10, Bit 1: PPM In on PF9
-    pub rear_left_func: u8,        // 132: 0: RC Switch (SWE), 1: Timer Reset, 2: Trims Modifier
-    pub rear_right_func: u8,       // 133: 0: RC Switch (SWF), 1: Instant Trim, 2: Trims Modifier
-    pub touch_disabled: u8,        // 134: 0: Touch Enabled, 1: Touch Disabled
-    pub j4_sg_sh_en: u8,           // 135: 0: SWD Debug, 1: SG/SH Buttons on PA13/PA14
-    pub switch_beep: u8,           // 136: 0: Muted, 1: Beep on switch toggle
-    pub _pad_align: [u8; 3],       // 137..140: Align to 140 bytes (4-byte word boundary)
+    pub aux_pots: [PotCalib; 11],  // 48..114 (66 bytes: SA..SD, VRA..VRB, VRC..VRG)
+    pub ext_module_pwr: u8,        // 114 (0: Active HIGH / N-type, 1: Active LOW / P-type)
+    pub tone_style: u8,            // 115 (0: Simple / Standard, 1: Rich / Melodic)
+    pub servo_rate_hz: u16,        // 116..118 (50..400 Hz, default 50 Hz for analog servo safety)
+    pub rx_out_mode: u8,           // 118 (0: PWM, 1: PPM, default 0)
+    pub rx_serial_proto: u8,       // 119 (0: i-BUS, 1: S.BUS, default 0)
+    pub ext_switches: u8,          // 120 (0: Disabled, 1: Enabled / PC12+PC15)
+    pub ext_adc: u8,               // 121 (0: Disabled, 1: Enabled / Header P7 AD11-AD15 or PC1-PC5)
+    pub adc_modes: [u8; 11],       // 122..133: Input modes for the 11 auxiliary analog channels
+    pub stick_mode: u8,            // 133 (0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4)
+    pub telem_slots: [u8; 4],      // 134..138: Configurable telemetry dashboard sensor slots (1..4)
+    pub trainer_config: u8,        // 138: Bit 0: PPM Out on PF10, Bit 1: PPM In on PF9
+    pub rear_left_func: u8,        // 139: 0: RC Switch (SWE), 1: Timer Reset, 2: Trims Modifier
+    pub rear_right_func: u8,       // 140: 0: RC Switch (SWF), 1: Instant Trim, 2: Trims Modifier
+    pub touch_disabled: u8,        // 141: 0: Touch Enabled, 1: Touch Disabled
+    pub j4_sg_sh_en: u8,           // 142: 0: SWD Debug, 1: SG/SH Buttons on PA13/PA14
+    pub switch_beep: u8,           // 143: 0: Muted, 1: Beep on switch toggle
+    pub _pad_align: [u8; 4],       // 144..148: Align to 148 bytes (4-byte word boundary)
 }
 
 impl RadioConfig {
@@ -251,6 +258,11 @@ impl RadioConfig {
                     crate::adc::ADC_CENTER,
                     crate::adc::ADC_MAX,
                 ), // VRF
+                PotCalib::new(
+                    crate::adc::ADC_MIN,
+                    crate::adc::ADC_CENTER,
+                    crate::adc::ADC_MAX,
+                ), // VRG
             ],
             ext_module_pwr: 0,
             tone_style: 1,
@@ -259,7 +271,7 @@ impl RadioConfig {
             rx_serial_proto: 0,
             ext_switches: 0,
             ext_adc: 0,
-            adc_modes: [0; 10], // Default hardware modes
+            adc_modes: [0; 11], // Default hardware modes
             stick_mode: 1,      // Mode 2 default
             telem_slots: [0, 1, 2, 3], // Default: RxBat, RSSI/LQ, TxBat, Current/Link
             trainer_config: 0,
@@ -268,7 +280,7 @@ impl RadioConfig {
             touch_disabled: 0,
             j4_sg_sh_en: 0,
             switch_beep: 1,
-            _pad_align: [0; 3],
+            _pad_align: [0; 4],
         }
     }
 
@@ -307,24 +319,24 @@ impl RadioConfig {
     /// Get raw configured ADC mode index (0..=6) for auxiliary input `ch` (`0..10`).
     #[inline(always)]
     pub const fn get_adc_mode_val(&self, ch: usize) -> u8 {
-        if ch < 10 {
+        if ch < 11 {
             self.adc_modes[ch]
         } else {
             0
         }
     }
 
-    /// Set raw configured ADC mode index (0..=6) for auxiliary input `ch` (`0..10`).
+    /// Set raw configured ADC mode index (0..=7) for auxiliary input `ch` (`0..10`).
     #[inline(always)]
     pub fn set_adc_mode_val(&mut self, ch: usize, val: u8) {
-        if ch < 10 {
-            self.adc_modes[ch] = val.min(6);
+        if ch < 11 {
+            self.adc_modes[ch] = val.min(7);
         }
     }
 
-    /// Get the effective AdcInputMode for an auxiliary channel (0..9: SA..SD, VRA..VRB, VRC..VRF).
+    /// Get the effective AdcInputMode for an auxiliary channel (0..10: SA..SD, VRA..VRB, VRC..VRG).
     pub fn get_adc_mode(&self, ch: usize) -> AdcInputMode {
-        if ch < 10 {
+        if ch < 11 {
             AdcInputMode::resolve(ch, self.adc_modes[ch])
         } else {
             AdcInputMode::Default
@@ -333,7 +345,7 @@ impl RadioConfig {
 
     /// Get the configured raw AdcInputMode (including Default).
     pub fn get_raw_adc_mode(&self, ch: usize) -> AdcInputMode {
-        if ch < 10 {
+        if ch < 11 {
             AdcInputMode::from_u8(self.adc_modes[ch])
         } else {
             AdcInputMode::Default
@@ -534,17 +546,21 @@ impl RadioStorage {
             32 => self.radio.ext_switches != 0, // SF
             33 => self.radio.j4_sg_sh_en != 0,   // SG
             34 => self.radio.j4_sg_sh_en != 0,   // SH
-            35 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(6), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWI (ADC ch 6)
-            36 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(7), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWJ (ADC ch 7)
-            37 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(6).is_pot(), // VRC (ADC ch 6)
-            38 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(7).is_pot(), // VRD (ADC ch 7)
-            39 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(8).is_pot(), // VRE (ADC ch 8)
-            40 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(9).is_pot(), // VRF (ADC ch 9)
+            35 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(6), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWI (ADC ch 6 / PC1)
+            36 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(7), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWJ (ADC ch 7 / PC2)
+            37 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(6).is_pot(), // VRC (ADC ch 6 / PC1)
+            38 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(7).is_pot(), // VRD (ADC ch 7 / PC2)
+            39 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(8).is_pot(), // VRE (ADC ch 8 / PC3)
+            40 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(9).is_pot(), // VRF (ADC ch 9 / PC4)
+            41 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(10).is_pot(), // VRG (ADC ch 10 / PC5)
+            42 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(8), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWK (ADC ch 8 / PC3)
+            43 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(9), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWL (ADC ch 9 / PC4)
+            44 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(10), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWM (ADC ch 10 / PC5)
             _ => false,
         }
     }
 
-    /// Check if a switch condition index (0..22, matching `SWITCH_COND_NAMES`) is valid given hardware config.
+    /// Check if a switch condition index (0..28, matching `SWITCH_COND_NAMES`) is valid given hardware config.
     pub fn is_switch_cond_available(&self, cond: u8) -> bool {
         match cond {
             0 => true, // Always ON
@@ -560,6 +576,9 @@ impl RadioStorage {
             17 | 18 => self.radio.j4_sg_sh_en != 0, // SH
             19 | 20 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(6), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWI
             21 | 22 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(7), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWJ
+            23 | 24 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(8), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWK
+            25 | 26 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(9), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWL
+            27 | 28 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(10), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWM
             _ => false,
         }
     }
@@ -721,10 +740,18 @@ impl RadioStorage {
             10 => matches!(self.radio.get_adc_mode(3), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SD
             31 => self.radio.ext_switches != 0, // SE
             32 => self.radio.ext_switches != 0, // SF
+            33 => self.radio.j4_sg_sh_en != 0,   // SG
+            34 => self.radio.j4_sg_sh_en != 0,   // SH
             35 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(6), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWI
             36 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(7), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWJ
             37 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(6).is_pot(), // VRC
             38 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(7).is_pot(), // VRD
+            39 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(8).is_pot(), // VRE
+            40 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(9).is_pot(), // VRF
+            41 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(10).is_pot(), // VRG
+            42 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(8), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWK
+            43 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(9), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWL
+            44 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(10), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWM
             _ => false,
         }
     }
@@ -1003,10 +1030,10 @@ impl RadioStorage {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<RadioConfig>() == 140);
+const _: () = assert!(core::mem::size_of::<RadioConfig>() == 148);
 const _: () = assert!(core::mem::size_of::<MixLine>() == 8);
 const _: () = assert!(core::mem::size_of::<ModelConfig>() == 348);
-const _: () = assert!(core::mem::size_of::<RadioStorage>() == 488);
+const _: () = assert!(core::mem::size_of::<RadioStorage>() == 496);
 
 static mut GLOBAL_STORAGE: RadioStorage = RadioStorage::empty();
 
@@ -1761,12 +1788,19 @@ mod tests {
 
     #[test]
     fn test_adc_input_mode_detent() {
-        assert_eq!(AdcInputMode::from_u8(4), AdcInputMode::Pot);
-        assert_eq!(AdcInputMode::from_u8(5), AdcInputMode::PotDetent);
-        assert_eq!(AdcInputMode::from_u8(6), AdcInputMode::InstantTrim);
+        assert_eq!(AdcInputMode::from_u8(0), AdcInputMode::Default);
+        assert_eq!(AdcInputMode::from_u8(1), AdcInputMode::Off);
+        assert_eq!(AdcInputMode::from_u8(2), AdcInputMode::TwoPos);
+        assert_eq!(AdcInputMode::from_u8(3), AdcInputMode::ThreePos);
+        assert_eq!(AdcInputMode::from_u8(4), AdcInputMode::SixPos);
+        assert_eq!(AdcInputMode::from_u8(5), AdcInputMode::Pot);
+        assert_eq!(AdcInputMode::from_u8(6), AdcInputMode::PotDetent);
+        assert_eq!(AdcInputMode::from_u8(7), AdcInputMode::InstantTrim);
         assert!(AdcInputMode::Pot.is_pot());
         assert!(AdcInputMode::PotDetent.is_pot());
         assert!(!AdcInputMode::InstantTrim.is_pot());
+        assert!(!AdcInputMode::Off.is_pot());
+        assert!(AdcInputMode::Off.is_off());
         assert!(!AdcInputMode::Pot.has_detent());
         assert!(AdcInputMode::PotDetent.has_detent());
     }
@@ -1774,9 +1808,9 @@ mod tests {
     #[test]
     fn test_pot_calib_and_radio_config_defaults() {
         let radio = RadioConfig::default_factory();
-        assert_eq!(radio.aux_pots.len(), 10);
-        assert_eq!(radio.adc_modes.len(), 10);
-        for i in 0..10 {
+        assert_eq!(radio.aux_pots.len(), 11);
+        assert_eq!(radio.adc_modes.len(), 11);
+        for i in 0..11 {
             assert_eq!(radio.aux_pots[i].min, crate::adc::ADC_MIN);
             assert_eq!(radio.aux_pots[i].center, crate::adc::ADC_CENTER);
             assert_eq!(radio.aux_pots[i].max, crate::adc::ADC_MAX);
@@ -1792,8 +1826,8 @@ mod tests {
     #[test]
     fn test_model_config_size_and_rf_power() {
         assert_eq!(core::mem::size_of::<ModelConfig>(), 348);
-        assert_eq!(core::mem::size_of::<RadioConfig>(), 140);
-        assert_eq!(core::mem::size_of::<RadioStorage>(), 488);
+        assert_eq!(core::mem::size_of::<RadioConfig>(), 148);
+        assert_eq!(core::mem::size_of::<RadioStorage>(), 496);
 
         let default_m = ModelConfig::default_for_index(0);
         assert_eq!(default_m.rf_power, 0);
@@ -1979,7 +2013,7 @@ mod tests {
         assert!(storage.is_source_available(9)); // SC
         assert!(storage.is_source_available(10)); // SD
 
-        // Extended switches SE..SH and SWI..SWJ unavailable by default
+        // Extended switches SE..SH and SWI..SWM / VRC..VRG unavailable by default
         assert!(!storage.is_source_available(31)); // SE
         assert!(!storage.is_source_available(32)); // SF
         assert!(!storage.is_source_available(33)); // SG
@@ -1988,6 +2022,34 @@ mod tests {
         assert!(!storage.is_source_available(36)); // SWJ
         assert!(!storage.is_source_available(37)); // VRC
         assert!(!storage.is_source_available(38)); // VRD
+        assert!(!storage.is_source_available(39)); // VRE
+        assert!(!storage.is_source_available(40)); // VRF
+        assert!(!storage.is_source_available(41)); // VRG
+        assert!(!storage.is_source_available(42)); // SWK
+        assert!(!storage.is_source_available(43)); // SWL
+        assert!(!storage.is_source_available(44)); // SWM
+
+        // Enable ext_adc
+        storage.radio.ext_adc = 1;
+        assert!(storage.is_source_available(37)); // VRC
+        assert!(storage.is_source_available(38)); // VRD
+        assert!(storage.is_source_available(39)); // VRE
+        assert!(storage.is_source_available(40)); // VRF
+        assert!(storage.is_source_available(41)); // VRG
+        storage.radio.set_adc_mode_val(10, 2); // 2-pos switch on PC5 (2 = TwoPos)
+        assert!(!storage.is_source_available(41)); // VRG is now switch, not pot
+        assert!(storage.is_source_available(44));  // SWM
+        assert!(storage.is_switch_cond_available(27)); // SWM^
+        assert!(storage.is_switch_cond_available(28)); // SWMv
+
+        // Turn PC5 to OFF (1 = Off)
+        storage.radio.set_adc_mode_val(10, 1);
+        assert!(!storage.is_source_available(41)); // VRG not available when Off
+        assert!(!storage.is_source_available(44)); // SWM not available when Off
+        assert!(!storage.is_switch_cond_available(27)); // SWM^ not available when Off
+        assert!(!storage.is_switch_cond_available(28)); // SWMv not available when Off
+        assert!(!storage.is_aux_source_available(41));  // VRG not available in AUX CHANNELS
+        assert!(!storage.is_aux_source_available(44));  // SWM not available in AUX CHANNELS
 
         // Enable ext_switches
         storage.radio.ext_switches = 1;

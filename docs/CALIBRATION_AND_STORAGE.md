@@ -57,24 +57,24 @@ pub struct RadioConfig {
     pub lcd_contrast: u8,          // 14: 15..55 (default 37 / 0x25)
     pub usb_mode: u8,              // 15: 0: Off, 1: Joystick, 2: Serial, 3: Composite
     pub sticks: [ChannelCalib; 4], // 16..48: Roll, Pitch, Throttle, Yaw (32 bytes)
-    pub aux_pots: [PotCalib; 10],  // 48..108: SA..SD, VRA..VRB, VRC..VRF (60 bytes)
-    pub ext_module_pwr: u8,        // 108: 0: Active HIGH (N-type), 1: Active LOW (P-type)
-    pub tone_style: u8,            // 109: 0: Simple / Standard, 1: Rich / Melodic
-    pub servo_rate_hz: u16,        // 110..112: 50..400 Hz (default 50 Hz for analog servo safety)
-    pub rx_out_mode: u8,           // 112: 0: PWM, 1: PPM
-    pub rx_serial_proto: u8,       // 113: 0: i-BUS, 1: S.BUS
-    pub ext_switches: u8,          // 114: 0: Disabled, 1: Enabled (PC12+PC15 on i6X)
-    pub ext_adc: u8,               // 115: 0: Disabled, 1: Enabled (PC2..PC5 on i6S / PC2..PC5 on i6X)
-    pub adc_modes: [u8; 10],       // 116..126: AdcInputMode (0..=6) for SA..SD, VRA..VRB, VRC..VRF
-    pub stick_mode: u8,            // 126: 0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4
-    pub telem_slots: [u8; 4],      // 127..131: Configurable telemetry dashboard slots (Top-L, Top-R, Btm-L, Btm-R)
-    pub trainer_config: u8,        // 131: Bit 0: PPM Out on PF10, Bit 1: PPM In on PF9
-    pub rear_left_func: u8,        // 132: 0: RC Switch (SWE), 1: Timer Reset, 2: Instant Trim, 3: Trims Modifier
-    pub rear_right_func: u8,       // 133: 0: RC Switch (SWF), 1: Instant Trim, 2: Trims Modifier
-    pub touch_disabled: u8,        // 134: 0: Touch Enabled, 1: Touch Disabled (FS-i6S touchscreen)
-    pub j4_sg_sh_en: u8,           // 135: 0: SWD Debug, 1: SG/SH Buttons on PA13/PA14
-    pub switch_beep: u8,           // 136: 0: Muted, 1: Beep on switch toggle
-    pub _pad_align: [u8; 3],       // 137..140: Align to 140 bytes (4-byte word boundary)
+    pub aux_pots: [PotCalib; 11],  // 48..114: SA..SD, VRA..VRB, VRC..VRG (66 bytes)
+    pub ext_module_pwr: u8,        // 114: 0: Active HIGH (N-type), 1: Active LOW (P-type)
+    pub tone_style: u8,            // 115: 0: Simple / Standard, 1: Rich / Melodic
+    pub servo_rate_hz: u16,        // 116..118: 50..400 Hz (default 50 Hz for analog servo safety)
+    pub rx_out_mode: u8,           // 118: 0: PWM, 1: PPM
+    pub rx_serial_proto: u8,       // 119: 0: i-BUS, 1: S.BUS
+    pub ext_switches: u8,          // 120: 0: Disabled, 1: Enabled (PC12+PC15 on i6X)
+    pub ext_adc: u8,               // 121: 0: Disabled, 1: Enabled (PC1..PC5 on i6S)
+    pub adc_modes: [u8; 11],       // 122..133: AdcInputMode (0..=6) for SA..SD, VRA..VRB, VRC..VRG
+    pub stick_mode: u8,            // 133: 0: Mode 1, 1: Mode 2, 2: Mode 3, 3: Mode 4
+    pub telem_slots: [u8; 4],      // 134..138: Configurable telemetry dashboard slots (Top-L, Top-R, Btm-L, Btm-R)
+    pub trainer_config: u8,        // 138: Bit 0: PPM Out on PF10, Bit 1: PPM In on PF9
+    pub rear_left_func: u8,        // 139: 0: RC Switch (SWE), 1: Timer Reset, 2: Instant Trim, 3: Trims Modifier
+    pub rear_right_func: u8,       // 140: 0: RC Switch (SWF), 1: Instant Trim, 2: Trims Modifier
+    pub touch_disabled: u8,        // 141: 0: Touch Enabled, 1: Touch Disabled (FS-i6S touchscreen)
+    pub j4_sg_sh_en: u8,           // 142: 0: SWD Debug, 1: SG/SH Buttons on PA13/PA14
+    pub switch_beep: u8,           // 143: 0: Muted, 1: Beep on switch toggle
+    pub _pad_align: [u8; 4],       // 144..148: Align to 148 bytes (4-byte word boundary)
 }
 
 /// A single freeform mix rule in the matrix mixer (8 bytes)

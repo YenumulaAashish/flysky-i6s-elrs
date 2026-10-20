@@ -558,8 +558,8 @@ mod tests {
         let raw_adc = [2048u16; adc::NUM_CHANNELS];
         let rf_chs = [1500u16; crate::mixer::NUM_CHANNELS];
 
-        // Configure VRA (channel 4) as PotDetent (index 5)
-        storage.radio.adc_modes[4] = 5;
+        // Configure VRA (channel 4) as PotDetent (index 6)
+        storage.radio.adc_modes[4] = 6;
 
         ctrl.open(&mut buzzer);
         assert_eq!(ctrl.selected_item, 0);
@@ -692,8 +692,8 @@ mod tests {
         let raw_adc = [2048u16; adc::NUM_CHANNELS];
         let rf_chs = [1500u16; crate::mixer::NUM_CHANNELS];
 
-        // Configure VRA as a TwoPos switch (1)
-        storage.radio.adc_modes[4] = 1;
+        // Configure VRA as a TwoPos switch (2)
+        storage.radio.adc_modes[4] = 2;
 
         ctrl.open(&mut buzzer);
         assert_eq!(ctrl.selected_item, 0);
