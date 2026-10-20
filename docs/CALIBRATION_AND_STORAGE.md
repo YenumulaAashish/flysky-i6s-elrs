@@ -1,23 +1,24 @@
-# STICK CALIBRATION & FLASH PERSISTENCE
+# STICK CALIBRATION & EEPROM STORAGE
 
-Technical documentation for the interactive 2-step calibration wizard and the non-volatile Flash configuration storage on the FlySky FS-i6X.
+Technical documentation for the interactive 2-step calibration wizard and the non-volatile EEPROM configuration storage on the FlySky FS-i6S.
 
 ---
 
-## 1. Flash Storage Layout (`src/storage.rs`)
+## 1. Storage Architecture (`src/storage.rs`)
 
-Configuration and model memories are stored in an 8 KB append-only log across the final four 2 KB sectors of the microcontroller's 128 KB internal Flash:
-- **Flash Storage Range:** `0x0801_E000 .. 0x0802_0000` (Pages 60, 61, 62, & 63 of STM32F072VB).
-- **Total Sector Size:** 8,192 bytes (4 × 2048-byte pages).
-- **Storage Engine:** Log-structured append-only Key-Value map powered by the `sequential-storage` crate (`sequential_storage::map`).
-- **Key-Value Mapping:**
-  - **Key `0`:** Global radio configuration (`RadioConfig`, 140 bytes).
-  - **Keys `1..=20`:** Model memory slots 1 through 20 (`ModelConfig`, 128 bytes each).
-- **Append-Only Write Performance:**
-  - Incremental updates write only ~132 bytes to the active flash log page in **~2.8 ms** (measured on hardware).
-  - **Zero page erases** during routine operation: editing trims, curves, or model settings causes zero perceptible UI stutter or audio glitch.
-  - **Automatic Wear-Levelled Compaction:** When all 4 pages become full of historical revisions, `sequential-storage` automatically compacts current active records into a newly erased page, rotating evenly across Pages 60–63.
-  - **Watchdog Protection:** During multi-page compaction routines, the hardware watchdog (`pac::IWDG`) is explicitly fed between page erase cycles, preventing 2.0s resets.
+Configuration and 20 model memories are persisted in an external 16 KB I2C EEPROM:
+- **I2C Bus & Pinout:** `I2C2` on `PB10` (SCL) and `PB11` (SDA) with Fast Mode Plus (Fm+ 1 MHz bus rate).
+- **Adaptive Address & Bus Probe:** Automatically probes `I2C2` (`PB10`/`PB11`) across slave addresses `0x50..=0x57` at boot, with secondary fallback to `I2C1` (`PB8`/`PB9`).
+- **Full Flash Reclamation:** Restores the entire internal 128 KB on-chip Flash to program code (`memory.x`), freeing 8 KB previously reserved for Flash emulation.
+- **Slot-Based Layout:**
+  - **Slot A (`0x0000`):** Primary `RadioConfig` (256-byte slot, CRC16 protected).
+  - **Slot B (`0x0100`):** Backup `RadioConfig` (256-byte slot, ping-pong failover).
+  - **Slots 1..20 (`0x0200 + i * 384`):** Dedicated 384-byte slots for 20 models, strictly aligned to 64-byte EEPROM page boundaries.
+- **Page Write Chunking:** Hardware writes are partitioned into 64-byte boundary chunks with ACK polling to observe the EEPROM's self-timed write cycle (≤5 ms).
+- **Diagnostics:** The detected EEPROM bus, I2C address, and read/write status are surfaced live on the LCD (`System Information` screen) and over USB serial (`storage`/`eeprom` command).
+
+> [!NOTE]
+> Physical inspection of FS-i6S PCBs confirms the presence of the external I2C EEPROM chip on PB10/PB11 across production hardware. If an early prototype or revision lacking the chip is encountered, users can fork and revert to internal flash emulation.
 
 ### Storage Structures (`RadioStorage` v5)
 

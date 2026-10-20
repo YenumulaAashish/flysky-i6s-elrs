@@ -19,8 +19,8 @@ The FlySky FS-i6S features an industrial design with an integrated capacitive to
   - **FocalTech FT6236 Capacitive Touchscreen (`PB8` / `PB9` / `PA15` / `PC12`):** Hardware I2C1 Fast Mode driver @ 400 kHz, gesture decoding (Swipe Up/Down/Left/Right), direct tap zones, and virtual dashboard trims.
   - **Front/Rear Tactile Buttons (`PA9` / `PA10`):** Direct hardware buttons for Cancel/Back (`PA9`) and OK/Select (`PA10`), configurable in flight mode as RC switches (`SWE`/`SWF`), Timer Reset, 3-Axis Instant Trim, or Stick Trim Modifiers.
   - **Zero-Disassembly DFU Bootloader:** Cold boot combo (hold Front Buttons `PA9` + `PA10`), System Info menu reboot option (`[OK] Reboot DFU`), and USB CDC serial command (`dfu`).
-- **Full 18-Channel Flight Engine:** Dedicated support for built-in A7105 AFHDS 2A (18-channel interleaved i-BUS/S.BUS encoding + configurable TX power), external CRSF/ELRS modules (up to 1.875M baud, full/half-duplex), 20-model sequential storage, 18-channel freeform matrix mixer, universal ADC input modes (`2-POS`, `3-POS`, `6-POS`, `POT`, `POT-D`, `INST-TRIM`), and configurable 4-tile telemetry dashboard.
-- **Lightweight Footprint:** **~113.6 KB Binary** (`.text` 108,248B + `.data` 8,060B = 116,308B out of 120 KB flash partition, leaving ~6.4 KB headroom) and **~8.9 KB static RAM** (`.data` 8,060B + `.bss` 1,056B = 9,116B out of 16 KB SRAM, leaving >7.0 KB stack safety margin).
+- **Full 18-Channel Flight Engine:** Dedicated support for built-in A7105 AFHDS 2A (18-channel interleaved i-BUS/S.BUS encoding + configurable TX power), external CRSF/ELRS modules (up to 1.875M baud, full/half-duplex), 20-model external I2C EEPROM storage, 18-channel freeform matrix mixer, universal ADC input modes (`2-POS`, `3-POS`, `6-POS`, `POT`, `POT-D`, `INST-TRIM`), and configurable 4-tile telemetry dashboard.
+- **Lightweight Footprint:** **~110.0 KB Binary** (`.text` 92,288B + `.rodata` 11,700B + `.data` 5,876B = 109,864B out of 128 KB flash partition, leaving ~18.1 KB headroom) and **~6.9 KB static RAM** (`.data` 5,876B + `.bss` 1,060B = 6,936B out of 16 KB SRAM, leaving >9.0 KB stack safety margin).
 
 ---
 
@@ -28,7 +28,7 @@ The FlySky FS-i6S features an industrial design with an integrated capacitive to
 
 | Peripheral | Controller / Spec | MCU Pins & Ports | Notes |
 | :--- | :--- | :--- | :--- |
-| **MCU** | STM32F072VB / APM32F072VB (Cortex-M0 @ 48 MHz) | ARMv6-M (`thumbv6m-none-eabi`) | 128 KB Flash (120 KB code + 8 KB storage), 16 KB SRAM |
+| **MCU** | STM32F072VB / APM32F072VB (Cortex-M0 @ 48 MHz) | ARMv6-M (`thumbv6m-none-eabi`) | 128 KB Flash (full 128 KB for application), 16 KB SRAM |
 | **Power Latch** | Electronic Power Switch | `PB15` (Output) | Driven HIGH immediately on boot in `hw::power::init()`; held HIGH across DFU jump |
 | **Power Button**| Soft Power Shutdown Sense | `PB14` (Input, Active Low) | Monitored by `PowerManager`; hold >= 1.5s triggers safe Flash flush & shutdown |
 | **Power LEDs** | Dual Blue Button LEDs | `PD10`, `PD11` (Outputs) | Solid ON in flight mode; 2 Hz blink when Settings Menu is open |
@@ -158,11 +158,11 @@ Comprehensive technical documentation is maintained in the [`docs/`](docs/) dire
 - **[AFHDS 2A Protocol & A7105 RF Driver](docs/RF_PROTOCOL.md)**: SPI1 hardware driver, 16-channel FHSS hopping table, 18-channel interleaved i-BUS packet structure, Model Match, and receiver binding.
 - **[Flight Inputs & Digital Trims](docs/INPUT_SUBSYSTEM.md)**: 11/15-channel ADC DMA scanner, universal `AdcInputMode` decoding, MMA jitter filtering, touch/modifier digital trims, and TIM1 PWM buzzer driver.
 - **[Flight Control & 18-Channel Mixing](docs/MIXER.md)**: 4-stage pipeline, integer cubic expo, Elevon/V-Tail/Flaperon templates, auxiliary channel mapping (`CH5..CH18`), and EdgeTX freeform matrix mixing.
-- **[Stick Calibration & Flash Persistence](docs/CALIBRATION_AND_STORAGE.md)**: Adaptive 2-step calibration wizard, tolerance margins, 140-byte `RadioConfig` / 128-byte `ModelConfig` layout, and 4-page append-only sequential storage.
+- **[Stick Calibration & EEPROM Persistence](docs/CALIBRATION_AND_STORAGE.md)**: Adaptive 2-step calibration wizard, tolerance margins, 256-byte `RadioConfig` A/B ping-pong / 384-byte `ModelConfig` layout in external 16 KB I2C EEPROM.
 - **[USB Subsystem & Simulator Manual](docs/USB_SUBSYSTEM.md)**: Hardware Full-Speed USB driver, 100 Hz HID Gamepad descriptor (8 axes, 16 buttons), CDC-ACM telemetry/CLI, and silent RF standby.
 - **[CRSF / ExpressLRS Subsystem Guide](docs/CRSF_ELRS_GUIDE.md)**: Native CRSF/ELRS driver on `USART1` (`PB6`/`PB7` on `J15`), `PF6` (`H1`) power control, 5 baud rates up to 1.875M, and on-radio configurator.
 - **[CRSF Protocol Specification & Verification](docs/CRSF_PROTOCOL_SPEC.md)**: Byte-level wire format, CRC8-DVB calculation, parameter discovery handshake, state machine lifecycle, and manual verification guide.
-- **[Testing Methodology & Verification Guide](docs/TESTING.md)**: Dual-target host test harness (`140` unit tests), peripheral mocking, deterministic virtual time, and adversarial state machine verification.
+- **[Testing Methodology & Verification Guide](docs/TESTING.md)**: Dual-target host test harness (`151` unit tests), peripheral mocking, deterministic virtual time, and adversarial state machine verification.
 - **[Ecosystem Context & Background](docs/FIRMWARE_COMPARISON.md)**: Background on open-source FlySky firmware development, OpenI6X heritage, FS-i6S hardware evolution, and the unified `ferrox` Rust architecture.
 - **[Hardware Reference & Pinout](docs/HARDWARE_REFERENCE.md)**: Detailed schematics, pin mappings, power latch, FT6236 touch protocol, ST7567 LCD timings, `J15`/`H1`/`J4`/`PC1..PC4` headers, and dual-MCU profiles.
 
@@ -170,10 +170,10 @@ Comprehensive technical documentation is maintained in the [`docs/`](docs/) dire
 
 ## 7. Current Firmware Footprint
 
-- **Application Flash ROM**: **~113.6 KB** (`.text` 108,248B + `.data` 8,060B = 116,308 bytes) used out of **120 KB** partition (**~6.4 KB / 5.4% free headroom**).
-- **Static RAM**: **~8.9 KB** (`.data` 8,060B + `.bss` 1,056B = 9,116 bytes) out of **16 KB** available (**>44% SRAM free** with **>7.0 KB** guaranteed stack safety margin).
-- **Non-Volatile Storage**: **8,192 bytes** (Pages 60–63) managed as an append-only log (`RadioConfig` 140B + 20 × `ModelConfig` 128B = 2,700B active dataset) with automatic wear levelling.
-- **Automated Host Test Suite**: **140 passing unit tests** (`cargo test-host`).
+- **Application Flash ROM**: **~110.0 KB** (`.text` 92,288B + `.rodata` 11,700B + `.data` 5,876B = 109,864 bytes) used out of **128 KB** partition (**~18.1 KB / 14.1% free headroom**).
+- **Static RAM**: **~6.9 KB** (`.data` 5,876B + `.bss` 1,060B = 6,936 bytes) out of **16 KB** available (**>56% SRAM free** with **>9.0 KB** guaranteed stack safety margin).
+- **Non-Volatile Storage**: **16,384 bytes** external I2C EEPROM (on I2C2 `PB10`/`PB11`) storing `RadioConfig` (A/B ping-pong) + 20 dedicated `ModelConfig` slots.
+- **Automated Host Test Suite**: **151 passing unit tests** (`cargo test`).
 
 For the complete phase-by-phase feature checklist, see **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
