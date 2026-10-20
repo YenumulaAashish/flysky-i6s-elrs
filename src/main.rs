@@ -383,6 +383,9 @@ impl BackgroundIdleManager {
         self.prev_stick_samples[5] = flight.state.raw[7];
 
         let sw_changed = flight.state.switches != self.prev_switches;
+        if sw_changed && storage.radio.switch_beep != 0 && !menu_active {
+            buzzer.play_tone(2200, 20);
+        }
         self.prev_switches = flight.state.switches;
 
         let user_active = keys != 0 || stick_moved || sw_changed;

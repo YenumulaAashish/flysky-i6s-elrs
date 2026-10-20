@@ -108,10 +108,10 @@ pub fn update_system_info(
         st_buf[10..14].copy_from_slice(bus);
         st_buf[19] = b"0123456789ABCDEF"[(status.addr >> 4) as usize];
         st_buf[20] = b"0123456789ABCDEF"[(status.addr & 0x0F) as usize];
-        let state = if status.read_ok && status.write_ok {
-            b"(OK) "
+        let state = if status.write_err {
+            b"(ERR)"
         } else if status.read_ok {
-            b"(R/O)"
+            b"(OK) "
         } else {
             b"(ERR)"
         };

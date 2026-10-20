@@ -1133,6 +1133,7 @@ pub struct EepromStatus {
     pub detected: bool,
     pub read_ok: bool,
     pub write_ok: bool,
+    pub write_err: bool,
 }
 
 pub static mut EEPROM_STATUS: EepromStatus = EepromStatus {
@@ -1141,6 +1142,7 @@ pub static mut EEPROM_STATUS: EepromStatus = EepromStatus {
     detected: false,
     read_ok: false,
     write_ok: false,
+    write_err: false,
 };
 
 pub fn get_eeprom_status() -> EepromStatus {
@@ -1698,16 +1700,22 @@ pub fn save_slot<T: Copy>(addr: u16, src: &T) -> Result<(), StorageError> {
 
         // Write header first
         let hdr_bytes = hdr.to_bytes();
-        EepromI2c::write(addr, &hdr_bytes)?;
-
-        // Write struct payload
-        EepromI2c::write(addr + HEADER_SIZE as u16, src_bytes)?;
+        let res = (|| -> Result<(), StorageError> {
+            EepromI2c::write(addr, &hdr_bytes)?;
+            EepromI2c::write(addr + HEADER_SIZE as u16, src_bytes)?;
+            Ok(())
+        })();
 
         unsafe {
-            EEPROM_STATUS.write_ok = true;
+            if res.is_ok() {
+                EEPROM_STATUS.write_ok = true;
+                EEPROM_STATUS.write_err = false;
+            } else {
+                EEPROM_STATUS.write_err = true;
+            }
         }
 
-        Ok(())
+        res
     }
 }
 
