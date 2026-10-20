@@ -1,6 +1,6 @@
-# FLYSKY FS-I6S USER GUIDE & OPERATIONS MANUAL
+# FLYSKY FS-I6X USER GUIDE & OPERATIONS MANUAL
 
-A comprehensive guide to operating the `flysky-i6s-rs` firmware on the FlySky FS-i6S transmitter.
+A comprehensive guide to operating the `flysky-i6x-rs` firmware on the FlySky FS-i6X transmitter.
 
 ---
 
@@ -8,7 +8,7 @@ A comprehensive guide to operating the `flysky-i6s-rs` firmware on the FlySky FS
 
 ```
                   +-----------------------------------+
-                  |         FlySky FS-i6S (Rust)      |
+                  |         FlySky FS-i6X (Rust)      |
                   |                                   |
                   |  [SW A]   [SW B]  [SW C]   [SW D] |
                   |  (2-pos) (3-pos) (3-pos)  (2-pos) |
@@ -20,50 +20,36 @@ A comprehensive guide to operating the `flysky-i6s-rs` firmware on the FlySky FS
                   |    Throttle (V)    Pitch / ELE (V)|
                   |    Yaw / RUD (H)   Roll / AIL (H) |
                   |                                   |
+                  |     [T-TRIM]          [E-TRIM]    |
+                  |     [R-TRIM]          [A-TRIM]    |
                   |                                   |
-                  |     (Power L: Cancel) (Power R: OK)|
-                  |     (PA9: Cancel)     (PA10: OK)  |
-                  |     [Blue LED]        [Blue LED]  |
+                  |            [ ST7567 LCD ]         |
+                  |              128x64 Mono          |
                   |                                   |
-                  |      +---------------------+      |
-                  |      |  ST7567 LCD 128x64  |      |
-                  |      |  Capacitive Touch   |      |
-                  |      +---------------------+      |
-                  |                                   |
+                  |  [BIND]    [UP]    [DOWN]    [OK] |
+                  |  (Direct)          [CANCEL / ESC] |
                   +-----------------------------------+
 ```
 
-### Powering On & Off (Electronic Power Latch)
-- **Power On**: Press and hold the dual front power buttons until the blue ring LEDs illuminate and the Ferrox-RC startup splash screen appears. The electronic power latch on `PB15` automatically energizes the internal power rails.
-- **Power Off (Hold >= 1.5s)**: Press and hold the power button for 1.5 seconds. An animated shutdown progress bar appears on screen. When the progress bar completes, all modified settings and model data are safely committed to Flash storage, and the firmware cuts the `PB15` power latch to completely turn off the radio. Releasing the button early aborts the shutdown without loss of settings.
-
-### Capacitive Touchscreen & Front Navigation Buttons
-- **Touch Gestures**:
-  - **Swipe UP / DOWN**: Scroll lists, cycle through the 5 flight dashboard pages (`1/5` .. `5/5`), or increment/decrement values.
-  - **Swipe RIGHT**: Select item, confirm value, enter submenu (**`[OK]`**).
-  - **Swipe LEFT**: Return to previous screen, exit edit mode (**`[CANCEL]`**).
-- **Direct Tap Zones in Menus**:
-  - **Top Row ($y < 22$)**: Navigate Up / Decrement value.
-  - **Bottom Row ($y > 44$)**: Navigate Down / Increment value.
-  - **Left Edge ($x < 32$)**: Cancel / Return.
-  - **Right Edge ($x > 96$)**: OK / Enter.
-  - **Center Zone**: OK / Enter.
-- **Dashboard Center Tap**:
-  - Tapping the center of the main flight screen opens the **Settings Menu**.
-- **Front Tactile Push-Buttons (Power Buttons)**:
-  - **Left Front Button (`PA9`)**: Functions as **`[CANCEL]` / Back / Exit**. On the flight dashboard, holding for >= 1.0s opens the HUD Timer Reset Modal and resets the flight timer.
-  - **Right Front Button (`PA10`)**: Functions as **`[OK]` / Select / Enter**. On the flight dashboard, holding for >= 1.2s opens the Settings Menu. Holding during power-on triggers immediate stick calibration.
-  - **Cold DFU Combo**: Holding **`PA9` + `PA10`** simultaneously during power-on triggers the zero-disassembly jump into the factory ROM DFU bootloader.
-
-### Digital Trimming
-1. **Stick Modifier Mode (Ergonomic In-Flight Trimming)**:
-   - **Hold Left Front Button (`PA9`)** + Left Stick: Vertical deflections adjust Throttle Trim; Horizontal deflections adjust Yaw Trim.
-   - **Hold Right Front Button (`PA10`)** + Right Stick: Vertical deflections adjust Pitch Trim; Horizontal deflections adjust Roll Trim.
-2. **Virtual Touch Perimeter Targets**:
-   - Tapping along the screen borders of the flight dashboard directly steps the corresponding trim (Left = Throttle, Right = Pitch, Bottom = Yaw/Roll).
+### Keypad & Navigation Buttons
+- **`[UP]`** / **`[DOWN]`**:
+  - **On Flight Screen**: Cycles through the 5 dashboard pages (`1/5` -> `2/5` -> `3/5` -> `4/5` -> `5/5` with `[DOWN]`, and reverse with `[UP]`).
+  - **In Menus & Editors**: Navigate menu items, cycle characters, increment/decrement values.
+  - **Auto-Repeat**: Holding **`[UP]`** or **`[DOWN]`** for >= 300 ms automatically repeats every **70 ms** for rapid scrolling through lists, swift character selection, and fast curve point editing.
+- **`[OK]`**: Enter submenu, toggle setting, confirm values, advance character cursor in naming editor.
+  - **Hold `[OK]` for 1.2 seconds** on any flight dashboard page: Opens the **Settings Menu**.
+  - **Hold `[OK]` during Power-On**: Launches **Stick Calibration** immediately.
+- **`[CANCEL]` (`[ESC]`)**:
+  - **On Flight Screen (Hold >= 1.0s)**: Opens the **HUD Timer Reset Modal** with a real-time progress bar. Holding for 1.0s resets the flight timer back to its configured duration (or 0:00 for count-up), sounds a high chime, and flashes a `"TIMER RESET!"` confirmation. Releasing early aborts without resetting.
+  - **In Menus**: Return to previous screen, exit edit mode, abort calibration, or complete one-way receiver binding.
+- **`[BIND]` (Dedicated Button with Clean Separation Logic)**:
+  - **Tap (`< 1.0s`) on Flight Screen**: Cycles through the 5 flight dashboard pages (`1/5` -> `2/5` -> `3/5` -> `4/5` -> `5/5` -> `1/5`).
+  - **Hold (`>= 1.0s`) on Flight Screen**: Initiates AFHDS 2A receiver binding.
+  - **Hold during Power-On**: Launches AFHDS 2A binding subprogram immediately at boot.
+  - **In Menus & Editors**: Functions as **`[TAB]` / Cursor Advance** (advances name characters or curve points) without triggering RF binding.
 
 ### Power-On Startup & Splash Screen
-- **Ferrox-RC Splash Screen**: When the transmitter powers on, the LCD immediately displays the 28x27 Ferrox-RC kinetic delta emblem, firmware identifier (`flysky-i6s-rs`), and build version for 1200 ms while ADC, DMA, and RF peripherals initialize in the background.
+- **Ferrox-RC Splash Screen**: When the transmitter powers on, the LCD immediately displays the 28x27 Ferrox-RC kinetic delta emblem, firmware identifier (`flysky-i6x-rs`), and build version for 1200 ms while ADC, DMA, and RF peripherals initialize in the background.
 - **Synchronized Welcome Fanfare**: Concurrently with the splash screen, the buzzer plays a 4-note ascending fanfare ($C_6 \to E_6 \to G_6 \to C_7$, 660 ms) under the `Rich` tone style (or a single tactile click under `Simple`). The cadence is driven by monotonic SysTick elapsed time for consistent musical timing.
 - **Watchdog Recovery Bypass (<2 ms)**: In the event of an in-flight watchdog reset, splash delays and melodic chimes are completely bypassed. An urgent 3-beep warning pattern sounds, and active RF control is restored in under 2 ms.
 
@@ -147,7 +133,7 @@ The main flight screen features 5 switchable display pages cycled by tapping **`
 - Flight timer configuration and state.
 
 ### Page 5/5: Dedicated Telemetry & RF Diagnostics
-Page 5/5 provides comprehensive telemetry monitoring with two distinct operating modes:
+Page 5/5 provides comprehensive telemetry telemetry monitoring with two distinct operating modes:
 
 #### 1. Default Telemetry Sensors View (Slots: RxBat, LQ/RSSI, TxBat, Current/Link)
 ```
@@ -208,19 +194,19 @@ When any slot in `TELEM DASH SETUP` is customized from default, Page 5/5 automat
 
 ## 3. Digital Trims & Audio Feedback
 
-All 4 primary axes have ±25 steps of digital trim authority (±100 µs):
+All 4 primary axes have dedicated digital rocker switches providing ±25 steps of trim authority (±100 µs):
 
 ### Trim Operation & Tones
-- **Single Step**: Nudges trim by 1 step (4 µs). A short tone sounds.
+- **Single Press**: Nudges trim by 1 step (4 µs). A short tone sounds.
 - **Pitch Shift**: Tone pitch rises as trim increases (1500..2500 Hz), giving instant acoustic feedback of direction.
 - **Center Return**: When passing through `0` (neutral), a distinctive high-pitched double-length tone (`2800 Hz`) sounds.
 - **End of Travel**: Attempting to move past ±25 sounds a low-frequency warning buzz (`1100 Hz`).
-- **Auto-Repeat**: Holding any trim input for >= 350 ms automatically repeats steps at 90 ms intervals.
+- **Auto-Repeat**: Holding any trim switch for >= 350 ms automatically repeats steps at 90 ms intervals.
 
 ### Throttle Trim Safety Modes
 Configurable in `Radio Setup`:
 1. **`OFF (Lock)` (Recommended for Betaflight / INAV / Multirotors)**:
-   - Throttle trim inputs are locked out. Pressing them sounds a warning tone without modifying output.
+   - Throttle trim buttons are locked out. Pressing them sounds a warning tone without modifying output.
    - Prevents accidental disarm failures or motor spin-ups caused by bumping the throttle trim.
 2. **`IDLE` (Traditional Glow / Nitro Engines)**:
    - Throttle trim only affects the lower half of the throttle stick range (1000..1500 µs), leaving maximum full-throttle output unchanged at 2000 µs.
@@ -234,7 +220,7 @@ All trim adjustments are debounced (2000 ms) and automatically saved to the acti
 
 ## 4. Menu Navigation & Subsystem Breakdown
 
-Hold **`[OK]` for 1.2 seconds** (or tap center of screen) from any flight screen to open the Settings Menu.
+Hold **`[OK]` for 1.2 seconds** from any flight screen to open the Settings Menu.
 
 ```
 +------------------------------------+
@@ -267,7 +253,7 @@ Hold **`[OK]` for 1.2 seconds** (or tap center of screen) from any flight screen
 - **Field 1: Model Type**:
   - Press **`[OK]`** to cycle between `AIRPLANE`, `GLIDER`, `HELI`, `QUAD`, and `GENERAL` (boats, rovers, surface models, robotics). Throttle interlock safety checks are automatically adapted based on model type.
 - **Field 2: Arm Switch (`Arm Sw:`)**:
-  - Assign any physical switch and position condition as the model's arming switch: **`NONE`**, **`SA^`**, **`SAv`**, **`SB^`**, **`SB-`**, **`SBv`**, **`SC^`**, **`SC-`**, **`SCv`**, **`SD^`**, **`SDv`**, plus rear buttons / modded switches **`SE^`**, **`SEv`**, **`SF^`**, **`SFv`**, **`SG^`**, **`SGv`**, **`SH^`**, **`SHv`**.
+  - Assign any physical switch and position condition as the model's arming switch: **`NONE`**, **`SA^`**, **`SAv`**, **`SB^`**, **`SB-`**, **`SBv`**, **`SC^`**, **`SC-`**, **`SCv`**, **`SD^`**, **`SDv`**, and modded **`SE^`**, **`SEv`**, **`SF^`**, **`SFv`**.
   - **Switch Auto-Detection**: Simply toggle the desired physical switch while editing to auto-detect and select it.
   - **Flight Safety & Acoustic Feedback**: Arming plays a rising tone chirp; disarming plays a falling tone chirp.
   - **Timer Integration**: Disarming pauses and unlatches the flight timer so the pilot can inspect total flight duration. Re-arming for the next flight automatically resets the timer back to its configured duration!
@@ -279,7 +265,7 @@ Hold **`[OK]` for 1.2 seconds** (or tap center of screen) from any flight screen
     - **`THs (RUN)`**: Throttle Switch mode—runs only while throttle stick $> 5\%$ ($> -900$), pauses when brought back to idle.
     - **`THt (LTCH)`**: Throttle Trigger / Latched mode—starts counting when throttle stick first exceeds 5%, and continues running non-stop throughout zero-throttle glides or multirotor descents.
     - **`ALWAYS ON`**: Continuous timer whenever the radio is powered on.
-    - **Switch Conditions (`SA^` through `SDv`, plus `SE^..SHv`)**: Runs while the specified switch condition is active.
+    - **Switch Conditions (`SA^` through `SDv`, plus `SE^..SFv`)**: Runs while the specified switch condition is active.
   - **Switch Auto-Detection**: Flipping any physical switch while editing `T-Trig` automatically sets that switch as the trigger.
 - **Field 5: Model Copy / Duplicate (`Copy -> Mxx`)**:
   - Select a target model slot (`M01`..`M20`) and press **`[OK]`** to clone the current model's name, trims, curves, mixer lines, and protocol settings for safe experimentation.
@@ -290,7 +276,7 @@ Hold **`[OK]` for 1.2 seconds** (or tap center of screen) from any flight screen
 
 ### Submenu 3: Dual Rate & Expo (`DUAL RATE/EXPO`)
 Configures stick throw authority and center sensitivity for primary controls:
-- **Switch**: Select physical hardware switch (`None`, `SA`, `SB`, `SC`, `SD`, `SE`, `SF`, `SG`, `SH`) to toggle between High Rates (UP) and Low Rates (MID/DOWN).
+- **Switch**: Select physical hardware switch (`None`, `SA`, `SB`, `SC`, `SD`, `SE`, `SF`) to toggle between High Rates (UP) and Low Rates (MID/DOWN).
 - **Channel**: Select axis to adjust (`Roll`, `Pitch`, `Yaw`).
 - **Hi Rate / Lo Rate**: Adjust throw authority (30%..100% in 5% steps).
 - **Hi Expo / Lo Expo**: Adjust center sensitivity (-100%..+100% in 5% steps). Positive expo softens stick sensitivity around center for smooth flight.
@@ -302,9 +288,9 @@ Interactive curve engine with real-time on-screen curve visualization (49 x 37 p
 +------------------------------------+
 | THROTTLE CURVE                     |
 |------------------------------------+
-|   Pts: 9-PT        +--------------+|
+|   Pts: 7-PT        +--------------+|
 |   Crv: SMOOTH      |     .---*    ||
-| > P3: 50% <        |    /         ||
+| > P04: 50% <       |    /         ||
 |                    |   /  *       ||
 |                    |  /           ||
 |                    +--------------+|
@@ -313,65 +299,65 @@ Interactive curve engine with real-time on-screen curve visualization (49 x 37 p
 +------------------------------------+
 ```
 
-- **Field 0 (`Pts:`)**: Toggle between **`5-PT`** and **`9-PT`**. The UI dynamically updates the point range indicator (`Pts: 1..5` in 5-point mode, `Pts: 1..9` in 9-point mode). Switching from 5-point to 9-point mode automatically **resamples** midpoint values between existing points (e.g. `[0, 25, 50, 75, 100]` -> `[0, 12, 25, 37, 50, 62, 75, 87, 100]`), preventing flat-zero dropoffs.
+- **Field 0 (`Pts:`)**: Cycle between **`5-PT`**, **`7-PT`**, and **`9-PT`**. The UI dynamically updates the point range indicator (`Pts: 1..5`, `Pts: 1..7`, or `Pts: 1..9`). Switching between point modes automatically **resamples** midpoint values between existing points, preventing flat-zero dropoffs.
 - **Field 1 (`Crv:`)**: Toggle between **`LINEAR`** (piecewise linear interpolation) and **`SMOOTH`** (**Catmull-Rom cubic Hermite spline** smoothing).
-- **Field 2.. (`P1` .. `Pn`)**:
-  - While navigating (`!editing`), scroll with **`[UP]`** / **`[DOWN]`** and press **`[OK]`** to enter point-editing mode (`> Pn: XX% <`).
+- **Field 2.. (`P01` .. `P09`)**:
+  - While navigating (`!editing`), scroll with **`[UP]`** / **`[DOWN]`** and press **`[OK]`** to enter point-editing mode (`> P04:  50% <`).
   - While editing:
     - **`[UP]`** / **`[DOWN]`**: Adjust point value between 0% and 100% (with auto-repeat when held).
-    - **`[OK]`**: Confirm current point and advance to next point (`P1` -> `P2` -> `...`). On the last point, exits edit mode.
-    - **`[BIND]`**: Tabs to the next point (wraps to `P1`).
+    - **`[OK]`**: Confirm current point and advance to next point (`P01` -> `P02` -> `...`). On the last point, exits edit mode.
+    - **`[BIND]`**: Tabs to the next point (wraps to `P01`).
     - **`[CANCEL]` (`[ESC]`)**: Exits point-editing mode.
   - A real-time 3 x 3 pixel dot indicator is plotted directly on the curve graph at the coordinates of the actively selected point.
 
 ### Submenu 5: Wing & Tail Mixer (`WING/MIXER`)
 - **Wing Template**: Cycle between `NORMAL`, `ELEVON/DELTA` (flying wings/jets: mixes Pitch & Roll on CH1/CH2), `V-TAIL` (gliders: mixes Pitch & Yaw on CH2/CH4), and `FLAPERON` (dual ailerons on CH1 & CH6 with flap input).
-- **Freeform Mix Lines (`M1` .. `M8`)**: Press **`[OK]`** to edit any mix line:
+- **Diff:** (When Elevon or Flaperon active): Adjust surface differential ratio (-100%..+100%).
+- **Freeform Mix Lines (`M01` .. `M32`)**: Press **`[OK]`** on any of the 32 matrix mixer lines to open `EDIT MIX 01`..`EDIT MIX 32`:
   - **Target**: Output channel (`CH1`..`CH18` or `Disabled`).
-  - **Source**: Control source (`Roll`, `Pitch`, `Thr`, `Yaw`, `VRA`, `VRB`, `SA..SD`, `SE..SH`, `VRC..VRF`, `MAX`, `CH1..CH18`, `Thr+`).
+  - **Source**: Control source (`Roll`, `Pitch`, `Thr`, `Yaw`, `VRA`, `VRB`, `SA..SD`, `MAX`, `CH1..CH18`, `Thr+`, `SE..SWJ`, `VRC..VRF`). *Dynamically filtered: only hardware-configured switches, pots, and active channels appear in selection list.*
+  - **Wt Src** (Weight Modulation Source): `Fixed` (direct weight gain), `CH1`..`CH18` (bipolar -100%..+100% modulation by channel or knob), or `CH1+`..`CH18+` (unipolar 0..100% modulation). *Dynamically filtered to active channels.*
   - **Weight / Offset**: Percentage scaling (-100%..+100%).
-  - **Switch**: Activation condition (`ON`, `SA^`, `SAv`, `SB^`, `SB-`, `SBv`, `SC^`, `SC-`, `SCv`, `SD^`, `SDv`, `SE^..SHv`).
+  - **Switch**: Activation condition (`ON`, `SA^`..`SWJv`). *Dynamically filtered: only available physical switches are shown.*
   - **Mode**: Multiplex method (`ADD (+)`, `MULT (*)`, `REPL (:=)`).
 
 ### Submenu 6: Auxiliary Channels (`AUX CHANNELS`)
-Assigns physical controls (switches `SA..SD`, pots `VRA/VRB`, rear buttons `SE/SF`, modded `SG/SH` and `VRC..VRF`, sticks, or `None`) to channels `CH5` through `CH18`.
+Assigns physical controls (switches `SA..SD`, pots `VRA/VRB`, modded `SE/SF` and `VRC..VRF`, sticks, or `None`) to channels `CH5` through `CH18`. Selection lists dynamically skip unconfigured expansion hardware.
 
 ### Submenu 7: Channel Reverse (`CH REVERSE`)
-- Lists all 18 channels (`CH1:ROL`, `CH2:PIT`, `CH3:THR`, `CH4:YAW`, `CH5`..`CH18`).
+- Lists all 18 channels (CH1:ROL, CH2:PIT, CH3:THR, CH4:YAW, SwA..SwD, VR1, VR2, CH11..CH18).
 - Press **`[OK]`** to toggle between **`NOR`** (Normal) and **`REV`** (Reversed).
 - Calculations use hardware-standard inversion: `pulse = 3000 - pulse`.
 - Automatically saved to non-volatile Flash upon exit.
 
 ### Submenu 8: Radio Setup (`RADIO SETUP`)
-The Radio Setup menu features a scrollable 4-item viewport with 9px row heights and automatic vertical scrolling across **20** system-level configuration parameters:
-- **`0: Thr Trim:`**: Toggle between `OFF (Lock)`, `IDLE`, and `LINEAR`.
-- **`1: Beeper:`**: Toggle audio sound between `ENABLED` and `MUTED`.
-- **`2: Tones:`**: Select audio notification style between **`RICH`** (melodic multi-tone chime sequences) and **`SIMPLE`** (classic single-tone buzzer beeps). Toggling gives an immediate live audio preview!
-- **`3: BL Timer:`**: LCD backlight auto-shutoff timeout: `ALWAYS ON`, `15 SEC`, `30 SEC`, or `60 SEC`. Touching any key or moving any stick wakes the backlight instantly.
-- **`4: BL Level:`**: Backlight brightness level from `10%` to `100%` in 10% steps (supports both stock transistors and the `PC9` hardware PWM dimming mod).
-- **`5: Contrast:`**: LCD Electronic Volume (EV) contrast adjustment from `20` to `50` in steps of 3 (default: **`37`** / `0x25`). Adjusting this value provides instant live visual preview on the ST7567 display and persists across reboots.
-- **`6: Bat Warn:`**: Low battery alarm threshold from `4.0V` to `5.0V` in 0.1V steps (default: **`4.4V`**, or 1.10V/cell for 4xAA). When battery drops below this voltage, the status bar badge flashes inverted and an audible warning chirp sounds.
-- **`7: USB Mode:`**: Selects active USB peripheral personality (switches on-the-fly via decoupled state transition with zero stack recursion or hardfault risk):
+The Radio Setup menu features a scrollable 4-item viewport with 9px row heights and automatic vertical scrolling across **16** system-level configuration parameters:
+- **`Thr Trim:`**: Toggle between `OFF (Lock)`, `IDLE`, and `LINEAR`.
+- **`Beeper:`**: Toggle audio sound between `ENABLED` and `MUTED`.
+- **`Tones:`**: Select audio notification style between **`RICH`** (melodic multi-tone chime sequences) and **`SIMPLE`** (classic single-tone buzzer beeps). Toggling gives an immediate live audio preview!
+- **`BL Timer:`**: LCD backlight auto-shutoff timeout: `ALWAYS ON`, `15 SEC`, `30 SEC`, or `60 SEC`. Touching any key or moving any stick wakes the backlight instantly.
+- **`BL Level:`**: Backlight brightness level from `10%` to `100%` in 10% steps (supports both stock transistors and the `PC9` hardware PWM dimming mod).
+- **`Contrast:`**: LCD Electronic Volume (EV) contrast adjustment from `20` to `50` in steps of 3 (default: **`37`** / `0x25`). Adjusting this value provides instant live visual preview on the ST7567 display and persists across reboots.
+- **`Bat Warn:`**: Low battery alarm threshold from `4.0V` to `5.0V` in 0.1V steps (default: **`4.4V`**, or 1.10V/cell for 4xAA). When battery drops below this voltage, the status bar badge flashes inverted and an audible warning chirp sounds.
+- **`USB Mode:`**: Selects active USB peripheral personality (switches on-the-fly via decoupled state transition with zero stack recursion or hardfault risk):
   - **`OFF`** (Default): Disables USB peripheral and D+ pullup to prevent unwanted PC inputs and minimize power draw.
   - **`JOYSTICK`**: 100 Hz native USB Gamepad for flight simulators with silent RF standby (zero RF radiation, cool running).
   - **`SERIAL`**: Virtual COM Port (CDC-ACM) at 115200 baud streaming live JSON telemetry while maintaining normal RF transmission.
   - **`COMPOSITE`**: Simultaneous HID Gamepad + CDC-ACM Virtual COM Port.
-- **`8: H1 PF6 Pwr:`**: Configures external module power polarity on `PF6` (header `H1` right pin): `HIGH (N)` (default active-HIGH for N-channel MOSFET switches) or `LOW (P)` (active-LOW for P-channel MOSFET switches).
-- **`9: J4 Mode:`**: Configures 4-pin SWD header `J4`: `SWD (DBG)` (standard ARM SWD debugger) or `SG/SH BTN` (enables `PA13` and `PA14` as momentary push-buttons / 2-pos switches SG and SH).
-- **`10: Rear L:`** / **`11: Rear R:`**: Configures rear tactile push-buttons `PA9`/`PA10` function: `SW (SE/SF)`, `TMR RST`, `INST TRM`, or `TRIM MOD`.
-- **`12: Touch:`**: Enables or disables FT6236 capacitive touch controller scanning (`ENABLED` / `DISABLED`).
-- **`13: Stick Mode:`**: Selects gimbal stick mode configuration: **`MODE 1`** (Throttle/Roll right, Pitch/Yaw left), **`MODE 2`** (Throttle/Yaw left, Pitch/Roll right—default), **`MODE 3`** (Pitch/Roll left, Throttle/Yaw right), or **`MODE 4`** (Pitch/Yaw right, Throttle/Roll left). Directly controls channel mapping for preflight throttle safety checks and flight controls.
-- **`14: Sw Sound:`**: Enables or disables acoustic confirmation tones on physical switch toggles (`OFF` / `ON`).
-- **`15: Inputs:`**: Opens the **Input Modes** (`INPUT MODES`) sub-screen to configure the input decoding modes for all 10 auxiliary analog channels individually:
-  - Channels: `SA (PA4)`, `SB (PA5)`, `SC (PB0)`, `SD (PB1)`, `VRA (PA6)`, `VRB (PA7)`, and expansion inputs `VRC (PC2)`, `VRD (PC3)`, `VRE (PC4)`, `VRF (PC5)`.
-  - Modes: **`DEFAULT`**, **`2-POS`**, **`3-POS`**, **`6-POS`**, **`POT`**, **`POT-D`** (Pot with center detent click), and **`INST TRM`** (Instant Trim trigger).
+- **`PC13 Pwr:`**: Configures external module power polarity on `PC13`: `HIGH (N)` (default active-HIGH for N-channel MOSFET switches) or `LOW (P)` (active-LOW for P-channel MOSFET switches).
+- **`Ext Sw:`**: Toggles auxiliary hardware switches SE and SF on pins `PC12` and `PC15` (`OFF` or `PC12+PC15`).
+- **`P7 Header:`**: Toggles autonomous 15-channel ADC scanning for auxiliary inputs AD12..AD15 on Header P7 (`OFF` or `AD12-AD15`).
+- **`Stick Mode:`**: Selects gimbal stick mode configuration: **`MODE 1`** (Throttle/Roll right, Pitch/Yaw left), **`MODE 2`** (Throttle/Yaw left, Pitch/Roll right—default), **`MODE 3`** (Pitch/Roll left, Throttle/Yaw right), or **`MODE 4`** (Pitch/Yaw right, Throttle/Roll left). Directly controls channel mapping for preflight throttle safety checks and flight controls.
+- **`Inputs:`**: Opens the **Input Setup** (`INPUT SETUP`) sub-screen to configure the input decoding modes for all 10 auxiliary analog channels individually:
+  - Channels: `SA (PA4)`, `SB (PA5)`, `SC (PB0)`, `SD (PB1)`, `VRA (PA6)`, `VRB (PA7)`, and Header P7 inputs `VRC (P7)`, `VRD (P7)`, `VRE (P7)`, `VRF (P7)`.
+  - Modes: **`DEFAULT`**, **`2-POS`**, **`3-POS`**, **`6-POS`**, **`POT`**, and **`POT-D`** (Pot with center detent click).
   - Toggling immediately reapplies calibration, adjusts the main flight dashboard layout dynamically, and enables center acoustic clicks when `POT-D` is selected.
-- **`16: Ext ADC (PC):`**: Toggles autonomous 15-channel ADC scanning for auxiliary inputs AD12..AD15 (`PC2`..`PC5`) (`OFF` or `PC2-PC5`).
-- **`17: Telem Page:`**: Opens the **Telemetry Dashboard Setup** (`TELEM DASH SETUP`) sub-screen to independently assign each quadrant of Flight Page 5/5:
+- **`PPM Out:`**: Configures 8-channel CPPM trainer frame output on `PF10` (`TIM15_CH2`): `OFF` or `ON (PF10)`. Mutually exclusive with `Trainer In`.
+- **`Trainer In:`**: Configures CPPM student trainer input capture on `PF9` (`TIM15_CH1`): `OFF` or `ON (SD DN)`. When enabled and a valid student PPM stream is received (< 100 ms age), holding **`SD` Down (`SDv`)** overrides primary flight controls (`CH1..CH4`). Mutually exclusive with `PPM Out`.
+- **`Telem Page:`**: Opens the **Telemetry Dashboard Setup** (`TELEM DASH SETUP`) sub-screen to independently assign each quadrant of Flight Page 5/5:
   - Slots: **`Top-L:`** (Top-Left), **`Top-R:`** (Top-Right), **`Btm-L:`** (Bottom-Left), **`Btm-R:`** (Bottom-Right).
   - Pressing **`[OK]`** cycles through the 13 available sensors: `RX BAT`, `LQ/RSSI`, `TX BAT`, `CURRENT`, `CAP mAh`, `TX PWR`, `SNR`, `PKT RATE`, `ANTENNA`, `PKTS TX`, `PKTS RX`, `TIMER`, `OFF`.
-- **`18: PPM Out:`**: Toggles 8-channel CPPM trainer output on `PF10` (`TIM15_CH2`) (`OFF` or `PF10 8CH`). Mutually exclusive with `Trainer In`.
-- **`19: Trainer In:`**: Toggles CPPM student trainer input capture on `PF9` (`TIM15_CH1`) (`OFF` or `PF9 SDv`). When enabled and a valid student PPM stream is present, holding **`SD` Down (`SDv`)** overrides primary flight axes (`CH1..CH4`) with the student's sticks. Mutually exclusive with `PPM Out`.
+  - Configurations persist automatically to non-volatile storage and dynamically activate the 4-tile `CUSTOM TELEM` dashboard.
 
 ### Submenu 9: Protocol Setup (`PROTOCOL SETUP`)
 Universal RF protocol and receiver configuration, saved per-model:
@@ -382,11 +368,11 @@ Universal RF protocol and receiver configuration, saved per-model:
     > **Servo Safety Warning**: Standard analog servos (e.g. SG90, MG90S) **MUST** be driven at 50 Hz. Feeding higher frequencies to analog servos can cause severe jitter, excessive heating, and motor burnout. Only select rates above 50 Hz when all connected servos are high-speed digital servos rated for higher frame rates.
   - `RX Out:`: Receiver output signal format: **`PWM`** (individual servo pin outputs) or **`PPM`** (composite Pulse Position Modulation stream on CH1).
   - `Serial:`: Receiver serial bus protocol: **`i-BUS`** (`0xDE`, FlySky proprietary bidirectional serial protocol) or **`S.BUS`** (`0xDD`, Futaba/FrSky inverted serial stream for flight controllers). Transmitted immediately over the air to reconfigure the receiver hardware dynamically.
-- **`Proto: CRSF`**: Drives external Crossfire, ExpressLRS, or compatible CRSF transmitter modules connected to the expansion header `J15` (`PB6` TX, `PB7` RX) with hardware power control on `PF6` (`H1`).
+- **`Proto: CRSF`**: Drives external Crossfire, ExpressLRS, or compatible CRSF transmitter modules connected to the rear expansion bay (`PD5` TX, `PA15` RX) with hardware power control on `PC13`.
   - **A7105 Deep Sleep**: When CRSF protocol is selected, the internal A7105 2.4 GHz RF transceiver is automatically placed into deep sleep mode (`0x0F`), completely eliminating internal RF transmission, reducing battery consumption, and preventing thermal buildup.
   - Pressing **`[OK]`** cycles selection through Protocol, Baud Rate, Duplex mode, and Configure Module:
-    - `Baud:` Selectable baud rate in ascending order: `115.2k (Low)`, `416.6k (TBS)`, `420k (ELRS)` (default), `921.6k (Fast)`, and `1.875M (Max)`.
-    - `Duplex:` Serial wiring topology: `Full (2W)` (standard 2-wire `PB6` TX / `PB7` RX) or `Half (1W)` (bidirectional single-wire half-duplex over `PB6` with hardware self-echo suppression).
+    - `Baud:` Selectable baud rate: `115.2k (Low)`, `416.6k (TBS)`, `420k (ELRS)` (default), `921.6k (Fast)`, and `1.875M (Max)`.
+    - `Duplex:` Serial wiring topology: `Full (2W)` (standard 2-wire `PD5` TX / `PA15` RX) or `Half (1W)` (bidirectional single-wire half-duplex over `PD5` with hardware self-echo suppression).
     - `[Configure Module]`: Opens the native TBS-Agent style configurator screen to discover devices, navigate subfolders, and configure settings.
     - *For complete wiring pinouts, power polarity settings, live telemetry dashboard metrics, and the configurator guide, see the dedicated [CRSF Subsystem Guide](CRSF_ELRS_GUIDE.md).*
 
@@ -404,9 +390,9 @@ Launches the interactive 2-step calibration wizard (see Section 6 below), automa
 - Multi-page graphic diagnostics screen matching the `CHANNEL MONITOR` layout with 40-pixel graphic fill bars and exact 4-digit raw decimal ADC counts (0..4095):
   - **Page 1 (`ANALOG (1-6)`)**: Stick gimbals & switches: `RH:AIL`, `RV:ELE`, `LV:THR`, `LH:RUD`, `SW:SA`, `SW:SB`.
   - **Page 2 (`ANALOG (7-11)`)**: Rotary pots, switches, & battery: `POT:V1`, `POT:V2`, `SW:SC`, `SW:SD`, `VBAT`.
-  - **Page 3 (`EXT SWITCHES`)**: Rear tactile buttons SE/SF (`PA9`/`PA10`) and J4 header switches SG/SH (`PA13`/`PA14`) showing live digital high/low state and configuration status.
-  - **Page 4 (`EXT ANALOG (PC)`)**: Auxiliary analog channels `VRC:AD12`, `VRD:AD13`, `VRE:AD14`, and `VRF:AD15` (`PC2`..`PC5`) with fill bars and raw ADC counts.
-- Press **`[UP]`** / **`[DOWN]`** to cycle through the 4 diagnostic pages.
+  - **Page 3 (`EXT SWITCHES (SE/SF)`)**: Modded auxiliary toggle switches SE (`PC12`) and SF (`PC15`) showing live digital high/low state and configuration status.
+  - **Page 4 (`EXT ANALOG (P7)`)**: Auxiliary analog channels `VRC:AD12`, `VRD:AD13`, `VRE:AD14`, and `VRF:AD15` on Header P7 with fill bars and raw ADC counts.
+- Press **`[UP]`** / **`[DOWN]`** to cycle through the diagnostic pages.
 - Press **`[CANCEL]` (`[ESC]`)** to return to the Main Menu.
 
 ### Submenu 13: System Information (`SYSTEM INFO`)
@@ -416,7 +402,7 @@ Launches the interactive 2-step calibration wizard (see Section 6 below), automa
 
 ## 5. Flight Timer Subsystem & Pilot Audio Ergonomics
 
-The `flysky-i6s-rs` firmware features an EdgeTX/OpenTX-parity flight timer engine designed to prevent unexpected battery depletion, track flight pack duration, and support diverse aircraft categories (fixed-wing, sailplane, and multirotor).
+The `flysky-i6x-rs` firmware features an EdgeTX/OpenTX-parity flight timer engine designed to prevent unexpected battery depletion, track flight pack duration, and support diverse aircraft categories (fixed-wing, sailplane, and multirotor).
 
 ### 1. Timer Modes & Triggers (`T-Trig:`)
 Configurable per-model in **`MODEL SETUP`** -> **`T-Trig:`**:
@@ -457,7 +443,7 @@ The audio engine provides distinctive non-blocking tone patterns during flight:
 - **Overdue Count-Up**: After reaching zero, the timer continues counting upward into negative time (`-00:01`, `-00:02`...) and blinks/inverts on the LCD footer, informing the pilot exactly how far overdue the flight is.
 
 ### 5. Non-Visual Potentiometer Center Detent Haptics
-Because the FS-i6S hardware potentiometers (`VRA` and `VRB`) lack physical center detents, the firmware monitors knob rotation in real time:
+Because the FS-i6X hardware potentiometers (`VRA` and `VRB`) lack physical center detents, the firmware monitors knob rotation in real time:
 - Whenever `VRA` or `VRB` crosses through mechanical center ($0$), a subtle audio click (`2200 Hz`, 10 ms) sounds.
 - Enables pilots wearing FPV goggles or maintaining visual line-of-sight on their model to center flaps, gimbal pitch, or gain dials without glancing at the screen.
 
@@ -473,11 +459,11 @@ Calibration ensures gimbals reach full travel without clipping or deadzones:
 2. **Step 1: Center Position**:
    - Let Roll, Pitch, and Yaw return to center springs.
    - Move Throttle (friction stick) to the physical middle (50%).
-   - Center rotary dials VRA and VRB.
+   - Center all active rotary dials (VRA, VRB, and any continuous potentiometers configured in Input Setup).
    - Press **`[OK]`** to capture neutral centers.
 3. **Step 2: Limit Travel**:
    - Move both gimbals in wide circular motions touching all four corners.
-   - Rotate VRA and VRB back and forth across their full rotation.
+   - Rotate all active potentiometers back and forth across their full rotation.
    - Watch the on-screen gauges fill out. Once an axis has measured sufficient travel, its indicator changes from `--` to `OK`.
    - When all axes display `OK`, press **`[OK]`** to save.
 4. **Completion**:
@@ -511,34 +497,42 @@ The firmware provides 4 convenient ways to initiate AFHDS 2A binding with clean 
 
 ## 8. Firmware Flashing, Full Flash Backup, & DFU Recovery
 
-The FlySky FS-i6S can be backed up and flashed directly over USB with **zero disassembly**:
+The FlySky FS-i6X can be backed up and flashed directly over USB without specialized hardware programmer probes:
 
 ### 1. Enter Factory ROM DFU Bootloader
 
-You can enter DFU mode using any of three convenient methods:
+#### A. Initial Flash from Stock FlySky Factory Firmware (R53 Bootloader Access)
+The stock FlySky factory firmware does not include the software key-check logic to jump into the DFU bootloader. Therefore, entering DFU mode for the very first time requires access to the hardware `BOOT0` line:
+1. Ensure the transmitter is switched **OFF** and remove the rear case screws.
+2. Carefully separate the rear case. Be aware of the battery wires connected between the two halves. Once separated, locate the two unpopulated solder pads labeled **`R53`** on the back of the motherboard (near the microcontroller). It is best to connect the USB cable to the rear case now.
+3. Momentarily bridge/short the two `R53` pads using tweezers, a jumper wire, or a screwdriver tip.
+4. While holding the bridge across `R53`, have the USB cable connected to your PC and switch the transmitter power switch **ON**.
+5. Bridging `R53` pulls the MCU's `BOOT0` pin to 3.3V, causing the chip to boot directly into its factory ROM DFU bootloader (`0483:df11` for STM32, `314b:0106` for APM32). The transmitter screen remains blank, and the PC detects the device as `STM32 BOOTLOADER`.
+6. Once powered on, you can remove the bridge across `R53`. You do not need to keep it bridged while flashing.
 
-#### A. Zero-Disassembly Cold-Boot Combo (Recommended)
-1. Ensure the transmitter is powered **OFF**.
-2. Press and hold both front tactile push-buttons simultaneously (**Left Front `PA9` + Right Front `PA10`**).
-3. Holding both buttons down powers on the hardware circuit, `PB15` latches power ON, and the MCU jumps straight into the permanent STM32 factory ROM DFU bootloader (`0483:df11`). The PC immediately detects `STM32 BOOTLOADER`.
+> [!TIP]
+> For board photos and detailed platform walk-throughs, refer to the [OpenI6X Flashing & Upgrading Documentation](https://github.com/OpenI6X/opentx/wiki/Flashing-&-Upgrading).
 
-#### B. Software Touch Menu
-From the running firmware, navigate to **`Settings -> Diag (System Information)`**, scroll to **`[OK] Reboot DFU`**, and tap/press OK. The firmware writes `0xDEADBEEF` to SRAM `0x2000_3FF0`, maintains power on `PB15`, and warm-reboots directly into ROM DFU.
+#### B. Upgrading from OpenI6X or flysky-i6x-rs (No Disassembly Needed)
+Once custom firmware has been flashed to the radio, hardware pad bridging is never needed again:
+- With the transmitter powered off, hold **Roll Left + Yaw Right** inward towards the power switch while switching on the radio.
+- The LCD screen remains blank, and the transmitter enumerates over USB as `0483:df11` (STM32 BOOTLOADER).
 
-#### C. USB Serial CLI Command
-When connected via USB CDC serial (`SERIAL` or `COMPOSITE` mode), simply send `dfu` or `reboot bootloader` in the terminal.
-
-### 2. Backup Entire Flash (Recommended Before First Flash)
-Before flashing custom firmware, pull your entire 128 KB on-chip Flash memory to a local file for 100% safe, instant reversion:
+### 2. Backup Entire Flash (CRITICAL BEFORE FIRST FLASH)
+Before flashing any custom firmware, pull your entire 128 KB on-chip Flash memory to a local file for 100% safe, instant reversion:
 ```bash
 # Backup complete 128 KB on-chip Flash (firmware + calibration + models)
 dfu-util -a 0 -s 0x08000000:131072 -U stock_backup.bin
 ```
 
-### 3. Flash flysky-i6s-rs Firmware
+### 3. Flash flysky-i6x-rs Firmware
 Flash the compiled binary via `dfu-util`:
 ```bash
-dfu-util -a 0 -s 0x08000000:leave -D flysky-i6s.bin
+# For STM32F072:
+dfu-util -a 0 -s 0x08000000:leave -D flysky-i6x.bin
+
+# For APM32F072:
+dfu-util -a 0 -d 314b:0106 -s 0x08000000:leave -D flysky-i6x.bin
 ```
 The radio will immediately reboot into the new firmware upon completion.
 
@@ -564,7 +558,7 @@ The radio will immediately reboot into the new firmware upon completion.
 > *(Note: The message `Warning: Invalid DFU suffix signature` is also completely harmless—raw `.bin` files created by compilers omit the optional 16-byte PC DFU CRC trailer).*
 
 ### 4. Restore / Revert Anytime
-You can restore your original stock backup file at any time:
+You can restore your original stock or OpenI6X backup file at any time:
 ```bash
 dfu-util -a 0 -s 0x08000000:leave -D stock_backup.bin
 ```
@@ -608,7 +602,7 @@ The firmware includes five levels of proactive safety protection inspired by Ope
 ### 5. In-Flight Watchdog Recovery & Fast Return-to-Control
 - **Hardware Protection**: An Independent Hardware Watchdog (`pac::IWDG`) runs autonomously off an isolated 40 kHz LSI oscillator with a 2.0-second timeout.
 - **Warm Reboot Detection**: If an unexpected MCU reset occurs (e.g. from ESD, power rail fluctuation, or timing transient), the radio detects the watchdog reset signature in `RCC_CSR`.
-- **Interlock Bypass**: Unlike traditional firmware that traps the pilot on a startup warning screen because the throttle is up mid-flight, `flysky-i6s-rs` automatically bypasses power-on throttle/switch interlocks and the DFU delay during watchdog recovery.
+- **Interlock Bypass**: Unlike traditional firmware that traps the pilot on a startup warning screen because the throttle is up mid-flight, `flysky-i6x-rs` automatically bypasses power-on throttle/switch interlocks and the DFU delay during watchdog recovery.
 - **Instant Flight Recovery (< 2 ms)**: Active over-the-air channel transmission resumes in under **2 milliseconds**, well before receiver failsafe triggers.
 - **Pilot Acoustic Warning**: An urgent 3-beep alarm pattern (`2600 Hz`) sounds immediately on reboot to notify the pilot of the event while maintaining uninterrupted flight control.
 
@@ -616,15 +610,15 @@ The firmware includes five levels of proactive safety protection inspired by Ope
 
 ## 10. USB Subsystem & Flight Simulator Operations
 
-The FlySky FS-i6S features a hardware USB Full-Speed port wired directly to the microcontroller (`PA11` / `PA12`). The `flysky-i6s-rs` firmware supports native plug-and-play USB Joystick control, Virtual COM Port telemetry, and silent RF running.
+The FlySky FS-i6X features a hardware USB Full-Speed port wired directly to the microcontroller (`PA11` / `PA12`). The `flysky-i6x-rs` firmware supports native plug-and-play USB Joystick control, Virtual COM Port telemetry, and silent RF running.
 
 ### 1. Flight Simulator Setup (Liftoff, Velocidrone, RealFlight)
 1. In **`RADIO SETUP`**, ensure **`USB Mode`** is set to **`JOYSTICK`** (or `COMPOSITE`).
-2. Connect a standard Micro-USB cable between the FS-i6S and your computer.
-3. The radio automatically enumerates as **`FS-i6S Joystick`** on Windows, Linux, and macOS without requiring any drivers.
+2. Connect a standard Micro-USB cable between the FS-i6X and your computer.
+3. The radio automatically enumerates as **`FS-i6X Joystick`** on Windows, Linux, and macOS without requiring any drivers.
 4. Open your flight simulator (e.g. Liftoff, Velocidrone, RealFlight, FPV Freerider):
    - Navigate to the simulator's Controller Settings.
-   - Select `FS-i6S Joystick`.
+   - Select `FS-i6X Joystick`.
    - Calibrate the 4 main axes: Throttle, Roll, Pitch, and Yaw.
    - Assign switches (SwA..SwD) to simulator functions like Arm, Flight Mode (Acro/Angle), or Turtle Mode.
 
@@ -640,13 +634,12 @@ When connected via USB in `JOYSTICK` mode:
 
 ### 3. Virtual COM Port & Telemetry Streaming
 In **`SERIAL`** or **`COMPOSITE`** mode, the radio exposes a standard virtual serial port (`/dev/ttyACM0` on Linux, `COMx` on Windows):
-- **Clean Interactive CLI**: Connecting with a serial terminal (`sudo picocom /dev/ttyACM0 --imap lfcrlf`) connects silently without buffer spew. Pressing `[Enter]` displays the `i6s> ` prompt:
+- **Clean Interactive CLI**: Connecting with a serial terminal (`sudo picocom /dev/ttyACM0 --imap lfcrlf`) connects silently without buffer spew. Pressing `[Enter]` displays the `i6x> ` prompt:
   - `help`: List available commands.
   - `status`: Show firmware version, RF protocol, and battery/telemetry overview.
   - `channels`: Print real-time pulse widths in JSON format `{"ch":[...]}`.
   - `telem`: Print a single JSON telemetry line on demand.
   - `stream`: Start continuous 10 Hz JSON telemetry streaming (press any key to stop).
-  - `dfu`: Reboot into STM32 factory ROM DFU bootloader.
   - `reboot`: Trigger a software system reset.
 - **Universal Telemetry Streaming (10 Hz)**: Streams structured JSON Lines (`ndjson`) universally parseable by Python, Node.js, or WebSerial:
   ```json

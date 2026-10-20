@@ -1,19 +1,43 @@
-//! Flash storage for non-volatile configuration and 20-model memory system.
+//! I2C EEPROM storage (FT24C128A 16 KB) for non-volatile configuration and 20-model memory system.
 //!
-//! Log-structured append-only storage (`sequential-storage`):
-//! - Pages 60..63: 0x0801_E000 .. 0x0802_0000 (8,192 bytes across 4 pages)
+//! Pinout on FS-i6X mainboard:
+//! - PB10: I2C2_SCL
+//! - PB11: I2C2_SDA
 //!
-//! Total capacity: 8,192 bytes. Active dataset: 2,698 bytes. Log append headroom: 3,456+ bytes.
-
-use embedded_storage_async::nor_flash::NorFlash;
-use stm32f0xx_hal::pac;
+//! Physical capacity: 16,384 bytes (256 pages x 64 bytes).
+//! Slot layout:
+//! - 0x0000..0x0100 (256 B / 4 pages): Primary Radio Config (Slot A)
+//! - 0x0100..0x0200 (256 B / 4 pages): Backup Radio Config (Slot B - A/B safe save)
+//! - 0x0200..0x3E00 (15,360 B / 240 pages): 20 Models x 768 B (12 pages each)
+//! - 0x3E00..0x4000 (512 B / 8 pages): Reserved / scratchpad
 
 pub const FLASH_MAGIC: u32 = 0x4653_4B59; // "FSKY"
 pub const CONFIG_VERSION: u32 = 5;
 pub const NUM_MODELS: usize = 20;
 
-const FLASH_KEY1: u32 = 0x4567_0123;
-const FLASH_KEY2: u32 = 0xCDEF_89AB;
+/// 8-byte framing envelope magic ("FX" in little-endian = 0x58, 0x46 -> 0x4658)
+pub const SLOT_MAGIC: u16 = 0x4658;
+pub const SCHEMA_VERSION: u8 = 1;
+pub const HEADER_SIZE: usize = 8;
+
+pub const PAGE_SIZE: usize = 64;
+pub const EEPROM_TOTAL_SIZE: usize = 16_384;
+
+pub const RADIO_SLOT_A_ADDR: u16 = 0x0000;
+pub const RADIO_SLOT_B_ADDR: u16 = 0x0100;
+pub const RADIO_SLOT_SIZE: usize = 256;
+
+pub const MODEL_BASE_ADDR: u16 = 0x0200;
+pub const MODEL_SLOT_SIZE: usize = 768;
+
+#[inline(always)]
+pub const fn model_slot_addr(index: usize) -> Option<u16> {
+    if index >= NUM_MODELS {
+        None
+    } else {
+        Some(MODEL_BASE_ADDR + (index as u16) * (MODEL_SLOT_SIZE as u16))
+    }
+}
 
 /// Calibration parameters for a single analog channel (8 bytes).
 #[repr(C)]
@@ -317,16 +341,20 @@ impl RadioConfig {
     }
 }
 
-/// A single freeform mix rule in the matrix mixer (6 bytes).
+pub const NUM_MIX_LINES: usize = 32;
+
+/// A single freeform mix rule in the matrix mixer (8 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MixLine {
     pub target_ch: u8, // 0: Disabled, 1..18: Target Channel CH1..CH18
     pub source: u8, // 0: None, 1: Roll, 2: Pitch, 3: Thr, 4: Yaw, 5: VRA, 6: VRB, 7: SA, 8: SB, 9: SC, 10: SD, 11: MAX, 12..29: CH1..CH18, 30: ThrUnipolar, 31..40: SE..VRF
+    pub weight_src: u8, // 0: Fixed Weight, 1..18: Modulate with CH1..CH18 (Bipolar), 19..36: Modulate (Unipolar 0..100%)
     pub weight: i8, // -100% .. +100%
     pub offset: i8, // -100% .. +100%
     pub switch: u8, // 0: Always On, 1..22: SA_UP..SWJ_DN
     pub mode: u8,   // 0: Add (+), 1: Multiply (*), 2: Replace (:=)
+    pub _reserved: u8, // 1-byte padding for 8-byte alignment
 }
 
 impl MixLine {
@@ -334,15 +362,17 @@ impl MixLine {
         Self {
             target_ch: 0,
             source: 0,
+            weight_src: 0,
             weight: 100,
             offset: 0,
             switch: 0,
             mode: 0,
+            _reserved: 0,
         }
     }
 }
 
-/// Complete profile for an individual aircraft/model (exactly 128 bytes).
+/// Complete profile for an individual aircraft/model (exactly 348 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ModelConfig {
@@ -353,30 +383,33 @@ pub struct ModelConfig {
     pub trims: [i8; 4],         // 16..20: Roll, Pitch, Throttle, Yaw (-25..+25)
     pub channel_reverse: u32,   // 20..24: Bitmask for CH1..CH18 inversion
     pub dr_switch: u8,          // 24: 0: None, 1: SA, 2: SB, 3: SC, 4: SD, 5: SE, 6: SF
-    pub thr_curve_pts: u8,      // 25: 5 or 9 points mode
+    pub thr_curve_pts: u8,      // 25: 5, 7, or 9 points mode
     pub thr_curve_smooth: u8,   // 26: 0: Linear, 1: Spline / Smooth
-    pub thr_curve: [u8; 9],     // 27..36: Points 1..9 (0..100%)
-    pub dr_high: [u8; 3],       // 36..39: High rate (AIL, ELE, RUD: 50..100%)
-    pub dr_low: [u8; 3],        // 39..42: Low rate (AIL, ELE, RUD: 30..100%)
-    pub expo_high: [i8; 3],     // 42..45: High expo (-100..+100%)
-    pub expo_low: [i8; 3],      // 45..48: Low expo (-100..+100%)
-    pub timer_secs: u16,        // 48..50: Countdown timer in seconds (e.g. 300 = 5 min)
-    pub timer_source: u8, // 50: 0: Off, 1: THs (Thr>5%), 2: THt (Thr Latched), 3: Always On, 4..17: SA^..SFv
-    pub rf_power: u8, // 51: AFHDS 2A RF power (0: 100mW, 1: 10mW, 2: 1mW, 3: 100uW)
-    pub failsafe_thr: u16, // 52..54: Failsafe throttle pulse in µs (e.g. 1000)
-    pub aux_channels: [u8; 14], // 54..68: Source for CH5..CH18
-    pub wing_tail_mix: u8, // 68: 0: Normal, 1: Elevon/Delta, 2: V-Tail, 3: Flaperon
-    pub template_diff: i8, // 69: Differential / mix ratio (-100..+100)
-    pub mixes: [MixLine; 8], // 70..118: 8 freeform mix rules (8 * 6 = 48 bytes)
-    pub failsafe_mode: u8, // 118: 0: Hold last, 1: Custom pulses
-    pub failsafe_timeout: u8, // 119: 10..50 (1.0s..5.0s)
-    pub rf_protocol: u8,  // 120: 0: AFHDS 2A, 1: CRSF / ELRS
-    pub crsf_baud: u8,    // 121: 0: 115.2k, 1: 416.6k, 2: 420k, 3: 921.6k, 4: 1.875M
-    pub arm_switch: u8, // 122: 0: None, 1..14: SA^..SFv
-    pub rx_out_mode: u8, // 123: 0: PWM, 1: PPM (default 0)
-    pub servo_rate_hz: u16, // 124..126: 50..400 Hz (default 50 Hz)
-    pub rx_serial_proto: u8, // 126: 0: i-BUS, 1: S.BUS (default 0)
-    pub crsf_half_duplex: u8, // 127: 0: Full-Duplex (2-Wire), 1: Half-Duplex (1-Wire)
+    pub thr_curve: [u8; 17],    // 27..44: Points buffer (0..100%, reserved up to 17)
+    pub _pad_crv: u8,           // 44..45
+    pub dr_high: [u8; 3],       // 45..48: High rate (AIL, ELE, RUD: 50..100%)
+    pub dr_low: [u8; 3],        // 48..51: Low rate (AIL, ELE, RUD: 30..100%)
+    pub expo_high: [i8; 3],     // 51..54: High expo (-100..+100%)
+    pub expo_low: [i8; 3],      // 54..57: Low expo (-100..+100%)
+    pub _pad1: u8,              // 57..58: align timer_secs to 2-byte boundary
+    pub timer_secs: u16,        // 58..60: Countdown timer in seconds (e.g. 300 = 5 min)
+    pub timer_source: u8, // 60: 0: Off, 1: THs (Thr>5%), 2: THt (Thr Latched), 3: Always On, 4..17: SA^..SFv
+    pub rf_power: u8, // 61: AFHDS 2A RF power (0: 100mW, 1: 10mW, 2: 1mW, 3: 100uW)
+    pub failsafe_thr: u16, // 62..64: Failsafe throttle pulse in µs (e.g. 1000)
+    pub aux_channels: [u8; 14], // 64..78: Source for CH5..CH18
+    pub wing_tail_mix: u8, // 78: 0: Normal, 1: Elevon/Delta, 2: V-Tail, 3: Flaperon
+    pub template_diff: i8, // 79: Differential / mix ratio (-100..+100)
+    pub mixes: [MixLine; NUM_MIX_LINES], // 80..336: 32 freeform mix rules (32 * 8 = 256 bytes)
+    pub failsafe_mode: u8, // 336: 0: Hold last, 1: Custom pulses
+    pub failsafe_timeout: u8, // 337: 10..50 (1.0s..5.0s)
+    pub rf_protocol: u8,  // 338: 0: AFHDS 2A, 1: CRSF / ELRS
+    pub crsf_baud: u8,    // 339: 0: 115.2k, 1: 416.6k, 2: 420k, 3: 921.6k, 4: 1.875M
+    pub arm_switch: u8, // 340: 0: None, 1..14: SA^..SFv
+    pub rx_out_mode: u8, // 341: 0: PWM, 1: PPM (default 0)
+    pub servo_rate_hz: u16, // 342..344: 50..400 Hz (default 50 Hz)
+    pub rx_serial_proto: u8, // 344: 0: i-BUS, 1: S.BUS (default 0)
+    pub crsf_half_duplex: u8, // 345: 0: Full-Duplex (2-Wire), 1: Half-Duplex (1-Wire)
+    pub _pad_end: [u8; 2], // 346..348: Align struct to 4-byte word boundary
 }
 
 impl ModelConfig {
@@ -396,11 +429,13 @@ impl ModelConfig {
             dr_switch: 0,
             thr_curve_pts: 5,
             thr_curve_smooth: 0,
-            thr_curve: [0, 25, 50, 75, 100, 0, 0, 0, 0],
+            thr_curve: [0, 25, 50, 75, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            _pad_crv: 0,
             dr_high: [100, 100, 100],
             dr_low: [70, 70, 70],
             expo_high: [0, 0, 0],
             expo_low: [0, 0, 0],
+            _pad1: 0,
             timer_secs: 300,
             timer_source: 1,
             rf_power: 0,
@@ -408,7 +443,7 @@ impl ModelConfig {
             aux_channels: [7, 8, 5, 6, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0],
             wing_tail_mix: 0,
             template_diff: 0,
-            mixes: [MixLine::disabled(); 8],
+            mixes: [MixLine::disabled(); NUM_MIX_LINES],
             failsafe_mode: 0,
             failsafe_timeout: 20,
             rf_protocol: 0,
@@ -418,6 +453,7 @@ impl ModelConfig {
             rx_out_mode: 0,
             rx_serial_proto: 0,
             crsf_half_duplex: 0,
+            _pad_end: [0; 2],
         }
     }
 
@@ -432,53 +468,361 @@ impl ModelConfig {
     }
 }
 
-/// Complete Flash storage layout containing radio settings and 20 models (2,698 bytes).
+/// Compact storage layout containing radio settings and active model (488 bytes).
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct RadioStorage {
     pub radio: RadioConfig,
-    pub models: [ModelConfig; NUM_MODELS],
+    pub active_model: ModelConfig,
 }
 
 impl RadioStorage {
     pub const fn empty() -> Self {
         Self {
             radio: RadioConfig::default_factory(),
-            models: [ModelConfig::default_for_index(0); NUM_MODELS],
+            active_model: ModelConfig::default_for_index(0),
         }
     }
 
     #[allow(dead_code)]
     pub const fn default_factory() -> Self {
-        let mut models = [ModelConfig::default_for_index(0); NUM_MODELS];
-        let mut i = 0;
-        while i < NUM_MODELS {
-            models[i] = ModelConfig::default_for_index(i);
-            i += 1;
-        }
-        Self {
-            radio: RadioConfig::default_factory(),
-            models,
-        }
+        Self::empty()
     }
 
     pub fn init_default(&mut self) {
         self.radio = RadioConfig::default_factory();
-        let mut i = 0;
-        while i < NUM_MODELS {
-            self.models[i] = ModelConfig::default_for_index(i);
-            i += 1;
+        self.active_model = ModelConfig::default_for_index(0);
+    }
+
+    #[inline(always)]
+    pub fn active_model(&self) -> &ModelConfig {
+        &self.active_model
+    }
+
+    #[inline(always)]
+    pub fn active_model_mut(&mut self) -> &mut ModelConfig {
+        &mut self.active_model
+    }
+
+    /// Check if a mix source ID (0..40, matching `SOURCE_NAMES`) is available on this radio.
+    /// Filters out unconfigured switches, potentiometers, and unmapped channels.
+    pub fn is_source_available(&self, src: u8) -> bool {
+        match src {
+            0..=4 => true, // None, Roll, Pitch, Thr, Yaw are always available
+            5 => self.radio.get_adc_mode(4).is_pot(), // VRA (ADC ch 4)
+            6 => self.radio.get_adc_mode(5).is_pot(), // VRB (ADC ch 5)
+            7 => matches!(self.radio.get_adc_mode(0), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SA
+            8 => matches!(self.radio.get_adc_mode(1), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SB
+            9 => matches!(self.radio.get_adc_mode(2), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SC
+            10 => matches!(self.radio.get_adc_mode(3), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SD
+            11 => true, // MAX constant is always available
+            12..=15 => true, // CH1..CH4 primary flight channels are always active
+            16..=29 => {
+                // CH5..CH18: available if assigned to an active source or targeted by a mix line
+                let ch_idx = (src - 12) as usize; // 4..17
+                let aux_idx = ch_idx - 4; // 0..13
+                if self.active_model.wing_tail_mix == 3 && ch_idx == 5 {
+                    return true; // Flaperon drives CH6
+                }
+                if self.active_model.aux_channels[aux_idx] != 0 {
+                    return true;
+                }
+                self.active_model.mixes.iter().any(|m| m.target_ch == (ch_idx + 1) as u8)
+            }
+            30 => true, // Thr+ is always available
+            31 => self.radio.ext_switches != 0, // SE
+            32 => self.radio.ext_switches != 0, // SF
+            33 => self.radio.j4_sg_sh_en != 0,   // SG
+            34 => self.radio.j4_sg_sh_en != 0,   // SH
+            35 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(6), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWI (ADC ch 6)
+            36 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(7), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWJ (ADC ch 7)
+            37 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(6).is_pot(), // VRC (ADC ch 6)
+            38 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(7).is_pot(), // VRD (ADC ch 7)
+            39 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(8).is_pot(), // VRE (ADC ch 8)
+            40 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(9).is_pot(), // VRF (ADC ch 9)
+            _ => false,
         }
     }
 
-    pub fn active_model(&self) -> &ModelConfig {
-        let idx = (self.radio.active_model as usize).min(NUM_MODELS - 1);
-        &self.models[idx]
+    /// Check if a switch condition index (0..22, matching `SWITCH_COND_NAMES`) is valid given hardware config.
+    pub fn is_switch_cond_available(&self, cond: u8) -> bool {
+        match cond {
+            0 => true, // Always ON
+            1 | 2 => matches!(self.radio.get_adc_mode(0), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SA
+            3 | 5 => matches!(self.radio.get_adc_mode(1), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SB Up, Down
+            4 => self.radio.get_adc_mode(1) == AdcInputMode::ThreePos, // SB Mid
+            6 | 8 => matches!(self.radio.get_adc_mode(2), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SC Up, Down
+            7 => self.radio.get_adc_mode(2) == AdcInputMode::ThreePos, // SC Mid
+            9 | 10 => matches!(self.radio.get_adc_mode(3), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SD
+            11 | 12 => self.radio.ext_switches != 0, // SE
+            13 | 14 => self.radio.ext_switches != 0, // SF
+            15 | 16 => self.radio.j4_sg_sh_en != 0, // SG
+            17 | 18 => self.radio.j4_sg_sh_en != 0, // SH
+            19 | 20 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(6), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWI
+            21 | 22 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(7), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWJ
+            _ => false,
+        }
     }
 
-    pub fn active_model_mut(&mut self) -> &mut ModelConfig {
-        let idx = (self.radio.active_model as usize).min(NUM_MODELS - 1);
-        &mut self.models[idx]
+    /// Check if a channel index (1..=18) is configured / active in the active model.
+    pub fn is_channel_configured(&self, ch: u8) -> bool {
+        if ch == 0 || ch > 18 {
+            return false;
+        }
+        if ch <= 4 {
+            return true; // CH1..CH4 primary controls
+        }
+        let ch_idx = (ch - 1) as usize; // 4..17
+        let aux_idx = ch_idx - 4; // 0..13
+        if self.active_model.wing_tail_mix == 3 && ch == 6 {
+            return true; // Flaperon right aileron
+        }
+        if self.active_model.aux_channels[aux_idx] != 0 {
+            return true;
+        }
+        self.active_model.mixes.iter().any(|m| m.target_ch == ch)
+    }
+
+    /// Check if a weight modulation source index (0..=36, matching `WEIGHT_SRC_NAMES`) is available.
+    pub fn is_weight_src_available(&self, ws: u8) -> bool {
+        match ws {
+            0 => true, // Fixed weight
+            1..=18 => self.is_channel_configured(ws), // Bipolar CH1..CH18
+            19..=36 => self.is_channel_configured(ws - 18), // Unipolar CH1+..CH18+
+            _ => false,
+        }
+    }
+
+    /// Find the next available mix source index, wrapping around.
+    pub fn next_available_source(&self, cur: u8, max_len: usize) -> u8 {
+        let max = max_len as u8;
+        let mut candidate = (cur + 1) % max;
+        while candidate != cur {
+            if self.is_source_available(candidate) {
+                return candidate;
+            }
+            candidate = (candidate + 1) % max;
+        }
+        cur
+    }
+
+    /// Find the previous available mix source index, wrapping around.
+    pub fn prev_available_source(&self, cur: u8, max_len: usize) -> u8 {
+        let max = max_len as u8;
+        let mut candidate = if cur == 0 { max - 1 } else { cur - 1 };
+        while candidate != cur {
+            if self.is_source_available(candidate) {
+                return candidate;
+            }
+            candidate = if candidate == 0 { max - 1 } else { candidate - 1 };
+        }
+        cur
+    }
+
+    /// Find the next available weight modulation source index, wrapping around.
+    pub fn next_available_weight_src(&self, cur: u8, max_len: usize) -> u8 {
+        let max = max_len as u8;
+        let mut candidate = (cur + 1) % max;
+        while candidate != cur {
+            if self.is_weight_src_available(candidate) {
+                return candidate;
+            }
+            candidate = (candidate + 1) % max;
+        }
+        cur
+    }
+
+    /// Find the previous available weight modulation source index, wrapping around.
+    pub fn prev_available_weight_src(&self, cur: u8, max_len: usize) -> u8 {
+        let max = max_len as u8;
+        let mut candidate = if cur == 0 { max - 1 } else { cur - 1 };
+        while candidate != cur {
+            if self.is_weight_src_available(candidate) {
+                return candidate;
+            }
+            candidate = if candidate == 0 { max - 1 } else { candidate - 1 };
+        }
+        cur
+    }
+
+    /// Find the next available switch condition index, wrapping around.
+    pub fn next_available_switch_cond(&self, cur: u8, max_len: usize) -> u8 {
+        let max = max_len as u8;
+        let mut candidate = (cur + 1) % max;
+        while candidate != cur {
+            if self.is_switch_cond_available(candidate) {
+                return candidate;
+            }
+            candidate = (candidate + 1) % max;
+        }
+        cur
+    }
+
+    /// Find the previous available switch condition index, wrapping around.
+    pub fn prev_available_switch_cond(&self, cur: u8, max_len: usize) -> u8 {
+        let max = max_len as u8;
+        let mut candidate = if cur == 0 { max - 1 } else { cur - 1 };
+        while candidate != cur {
+            if self.is_switch_cond_available(candidate) {
+                return candidate;
+            }
+            candidate = if candidate == 0 { max - 1 } else { candidate - 1 };
+        }
+        cur
+    }
+
+    /// Check if a physical switch index (0..6: None, SA..SF) is available for Dual Rate selection.
+    pub fn is_dr_switch_available(&self, sw: u8) -> bool {
+        match sw {
+            0 => true, // None
+            1 => matches!(self.radio.get_adc_mode(0), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SA
+            2 => matches!(self.radio.get_adc_mode(1), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SB
+            3 => matches!(self.radio.get_adc_mode(2), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SC
+            4 => matches!(self.radio.get_adc_mode(3), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SD
+            5 => self.radio.ext_switches != 0, // SE
+            6 => self.radio.ext_switches != 0, // SF
+            _ => false,
+        }
+    }
+
+    /// Find next available Dual Rate switch (0..6).
+    pub fn next_available_dr_switch(&self, cur: u8) -> u8 {
+        let mut candidate = (cur + 1) % 7;
+        while candidate != cur {
+            if self.is_dr_switch_available(candidate) {
+                return candidate;
+            }
+            candidate = (candidate + 1) % 7;
+        }
+        cur
+    }
+
+    /// Find previous available Dual Rate switch (0..6).
+    pub fn prev_available_dr_switch(&self, cur: u8) -> u8 {
+        let mut candidate = if cur == 0 { 6 } else { cur - 1 };
+        while candidate != cur {
+            if self.is_dr_switch_available(candidate) {
+                return candidate;
+            }
+            candidate = if candidate == 0 { 6 } else { candidate - 1 };
+        }
+        cur
+    }
+
+    /// Check if an AUX channel input source (from `crate::hw::AUX_SOURCES`) is hardware-available.
+    pub fn is_aux_source_available(&self, src: u8) -> bool {
+        match src {
+            0..=4 => true, // None, Roll, Pitch, Thr, Yaw
+            5 => self.radio.get_adc_mode(4).is_pot(), // VRA
+            6 => self.radio.get_adc_mode(5).is_pot(), // VRB
+            7 => matches!(self.radio.get_adc_mode(0), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SA
+            8 => matches!(self.radio.get_adc_mode(1), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SB
+            9 => matches!(self.radio.get_adc_mode(2), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SC
+            10 => matches!(self.radio.get_adc_mode(3), AdcInputMode::TwoPos | AdcInputMode::ThreePos | AdcInputMode::InstantTrim), // SD
+            31 => self.radio.ext_switches != 0, // SE
+            32 => self.radio.ext_switches != 0, // SF
+            35 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(6), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWI
+            36 => self.radio.ext_adc != 0 && matches!(self.radio.get_adc_mode(7), AdcInputMode::TwoPos | AdcInputMode::ThreePos), // SWJ
+            37 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(6).is_pot(), // VRC
+            38 => self.radio.ext_adc != 0 && self.radio.get_adc_mode(7).is_pot(), // VRD
+            _ => false,
+        }
+    }
+
+    /// Cycle to next available AUX source in a given slice of source IDs.
+    pub fn next_available_aux_source(&self, cur: u8, sources: &[u8]) -> u8 {
+        let cur_pos = sources.iter().position(|&s| s == cur).unwrap_or(0);
+        let len = sources.len();
+        let mut idx = (cur_pos + 1) % len;
+        while idx != cur_pos {
+            let cand = sources[idx];
+            if self.is_aux_source_available(cand) {
+                return cand;
+            }
+            idx = (idx + 1) % len;
+        }
+        cur
+    }
+
+    /// Cycle to previous available AUX source in a given slice of source IDs.
+    pub fn prev_available_aux_source(&self, cur: u8, sources: &[u8]) -> u8 {
+        let cur_pos = sources.iter().position(|&s| s == cur).unwrap_or(0);
+        let len = sources.len();
+        let mut idx = if cur_pos == 0 { len - 1 } else { cur_pos - 1 };
+        while idx != cur_pos {
+            let cand = sources[idx];
+            if self.is_aux_source_available(cand) {
+                return cand;
+            }
+            idx = if idx == 0 { len - 1 } else { idx - 1 };
+        }
+        cur
+    }
+
+    /// Check if an Arm Switch condition (0..=14: 0: None, 1..=14: SA^..SFv) is available.
+    pub fn is_arm_switch_available(&self, sw: u8) -> bool {
+        match sw {
+            0 => true, // None
+            1..=14 => self.is_switch_cond_available(sw),
+            _ => false,
+        }
+    }
+
+    /// Cycle to next available Arm Switch (0..=14).
+    pub fn next_available_arm_switch(&self, cur: u8) -> u8 {
+        let mut candidate = (cur + 1) % 15;
+        while candidate != cur {
+            if self.is_arm_switch_available(candidate) {
+                return candidate;
+            }
+            candidate = (candidate + 1) % 15;
+        }
+        cur
+    }
+
+    /// Cycle to previous available Arm Switch (0..=14).
+    pub fn prev_available_arm_switch(&self, cur: u8) -> u8 {
+        let mut candidate = if cur == 0 { 14 } else { cur - 1 };
+        while candidate != cur {
+            if self.is_arm_switch_available(candidate) {
+                return candidate;
+            }
+            candidate = if candidate == 0 { 14 } else { candidate - 1 };
+        }
+        cur
+    }
+
+    /// Check if a Timer Source (0..=17: 0: Off, 1: THs, 2: THt, 3: Always On, 4..=17: SA^..SFv) is available.
+    pub fn is_timer_source_available(&self, ts: u8) -> bool {
+        match ts {
+            0..=3 => true, // Off, THs, THt, Always On
+            4..=17 => self.is_switch_cond_available(ts - 3),
+            _ => false,
+        }
+    }
+
+    /// Cycle to next available Timer Source (0..=17).
+    pub fn next_available_timer_source(&self, cur: u8) -> u8 {
+        let mut candidate = (cur + 1) % 18;
+        while candidate != cur {
+            if self.is_timer_source_available(candidate) {
+                return candidate;
+            }
+            candidate = (candidate + 1) % 18;
+        }
+        cur
+    }
+
+    /// Cycle to previous available Timer Source (0..=17).
+    pub fn prev_available_timer_source(&self, cur: u8) -> u8 {
+        let mut candidate = if cur == 0 { 17 } else { cur - 1 };
+        while candidate != cur {
+            if self.is_timer_source_available(candidate) {
+                return candidate;
+            }
+            candidate = if candidate == 0 { 17 } else { candidate - 1 };
+        }
+        cur
     }
 
     /// Sanitize all radio and model parameters to valid operating bounds.
@@ -571,98 +915,98 @@ impl RadioStorage {
             self.radio.trainer_config = 0;
         }
 
-        for (idx, m) in self.models.iter_mut().enumerate() {
-            if m.model_type > 4 {
-                m.model_type = 0;
+        let m = &mut self.active_model;
+        if m.model_type > 4 {
+            m.model_type = 0;
+        }
+        if m.rf_protocol > 1 {
+            m.rf_protocol = 0;
+        }
+        if m.crsf_baud > 4 {
+            m.crsf_baud = 2;
+        }
+        if m.crsf_half_duplex > 1 {
+            m.crsf_half_duplex = 0;
+        }
+        for axis in 0..3 {
+            if m.dr_high[axis] < 30 || m.dr_high[axis] > 100 {
+                m.dr_high[axis] = 100;
             }
-            if m.rf_protocol > 1 {
-                m.rf_protocol = 0;
+            if m.dr_low[axis] < 30 || m.dr_low[axis] > 100 {
+                m.dr_low[axis] = 70;
             }
-            if m.crsf_baud > 4 {
-                m.crsf_baud = 2;
+            if m.expo_high[axis] < -100 || m.expo_high[axis] > 100 {
+                m.expo_high[axis] = 0;
             }
-            if m.crsf_half_duplex > 1 {
-                m.crsf_half_duplex = 0;
+            if m.expo_low[axis] < -100 || m.expo_low[axis] > 100 {
+                m.expo_low[axis] = 0;
             }
-            for axis in 0..3 {
-                if m.dr_high[axis] < 30 || m.dr_high[axis] > 100 {
-                    m.dr_high[axis] = 100;
-                }
-                if m.dr_low[axis] < 30 || m.dr_low[axis] > 100 {
-                    m.dr_low[axis] = 70;
-                }
-                if m.expo_high[axis] < -100 || m.expo_high[axis] > 100 {
-                    m.expo_high[axis] = 0;
-                }
-                if m.expo_low[axis] < -100 || m.expo_low[axis] > 100 {
-                    m.expo_low[axis] = 0;
-                }
+        }
+        if m.dr_switch > 6 {
+            m.dr_switch = 0;
+        }
+        if m.wing_tail_mix > 3 {
+            m.wing_tail_mix = 0;
+        }
+        if m.template_diff < -100 || m.template_diff > 100 {
+            m.template_diff = 0;
+        }
+        if m.failsafe_thr < 900 || m.failsafe_thr > 2100 {
+            m.failsafe_thr = 1000;
+        }
+        if m.aux_channels[0..6] == [0; 6] {
+            m.aux_channels = [7, 8, 5, 6, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0];
+        }
+        for src in m.aux_channels.iter_mut() {
+            if *src > 40 {
+                *src = 0;
             }
-            if m.dr_switch > 6 {
-                m.dr_switch = 0;
+        }
+        for mix in m.mixes.iter_mut() {
+            if mix.target_ch > 18 || mix.source > 40 || mix.weight_src > 36 || mix.mode > 2 || mix.switch > 22 {
+                *mix = MixLine::disabled();
             }
-            if m.wing_tail_mix > 3 {
-                m.wing_tail_mix = 0;
-            }
-            if m.template_diff < -100 || m.template_diff > 100 {
-                m.template_diff = 0;
-            }
-            if m.failsafe_thr < 900 || m.failsafe_thr > 2100 {
-                m.failsafe_thr = 1000;
-            }
-            if m.aux_channels[0..6] == [0; 6] {
-                m.aux_channels = [7, 8, 5, 6, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0];
-            }
-            for src in m.aux_channels.iter_mut() {
-                if *src > 40 {
-                    *src = 0;
-                }
-            }
-            for mix in m.mixes.iter_mut() {
-                if mix.target_ch > 18 || mix.source > 40 || mix.mode > 2 || mix.switch > 22 {
-                    *mix = MixLine::disabled();
-                }
-            }
-            if m.thr_curve_pts != 5 && m.thr_curve_pts != 9 {
-                m.thr_curve_pts = 5;
-                m.thr_curve = [0, 25, 50, 75, 100, 0, 0, 0, 0];
-            }
-            if m.arm_switch > 14 {
-                m.arm_switch = 0;
-            }
-            if m.timer_source > 17 {
-                m.timer_source = 0;
-            }
-            if m.timer_secs > 3600 {
-                m.timer_secs = 0;
-            }
-            if m.rf_power > 3 {
-                m.rf_power = 0;
-            }
-            if m.servo_rate_hz < 50 || m.servo_rate_hz > 400 {
-                m.servo_rate_hz = 50;
-            }
-            if m.rx_out_mode > 1 {
-                m.rx_out_mode = 0;
-            }
-            if m.rx_serial_proto > 1 {
-                m.rx_serial_proto = 0;
-            }
-            if m.name[0] == 0 || m.name[0] == 0xFF {
-                let num = (idx + 1) as u8;
-                let digit1 = b'0' + (num / 10);
-                let digit2 = b'0' + (num % 10);
-                m.name = [
-                    b'M', b'O', b'D', b'E', b'L', b' ', digit1, digit2, b' ', b' ',
-                ];
-            }
+        }
+        if m.thr_curve_pts != 5 && m.thr_curve_pts != 7 && m.thr_curve_pts != 9 {
+            m.thr_curve_pts = 5;
+            m.thr_curve = [0, 25, 50, 75, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        }
+        if m.arm_switch > 14 {
+            m.arm_switch = 0;
+        }
+        if m.timer_source > 17 {
+            m.timer_source = 0;
+        }
+        if m.timer_secs > 3600 {
+            m.timer_secs = 0;
+        }
+        if m.rf_power > 3 {
+            m.rf_power = 0;
+        }
+        if m.servo_rate_hz < 50 || m.servo_rate_hz > 400 {
+            m.servo_rate_hz = 50;
+        }
+        if m.rx_out_mode > 1 {
+            m.rx_out_mode = 0;
+        }
+        if m.rx_serial_proto > 1 {
+            m.rx_serial_proto = 0;
+        }
+        if m.name[0] == 0 || m.name[0] == 0xFF {
+            let num = self.radio.active_model + 1;
+            let digit1 = b'0' + (num / 10);
+            let digit2 = b'0' + (num % 10);
+            m.name = [
+                b'M', b'O', b'D', b'E', b'L', b' ', digit1, digit2, b' ', b' ',
+            ];
         }
     }
 }
 
 const _: () = assert!(core::mem::size_of::<RadioConfig>() == 140);
-const _: () = assert!(core::mem::size_of::<ModelConfig>() == 128);
-const _: () = assert!(core::mem::size_of::<RadioStorage>() == 2700);
+const _: () = assert!(core::mem::size_of::<MixLine>() == 8);
+const _: () = assert!(core::mem::size_of::<ModelConfig>() == 348);
+const _: () = assert!(core::mem::size_of::<RadioStorage>() == 488);
 
 static mut GLOBAL_STORAGE: RadioStorage = RadioStorage::empty();
 
@@ -672,333 +1016,606 @@ pub fn get_storage() -> &'static mut RadioStorage {
     unsafe { &mut GLOBAL_STORAGE }
 }
 
-pub const FLASH_STORAGE_ADDR: usize = 0x0801_E000;
-pub const FLASH_STORAGE_END: usize = 0x0802_0000;
-pub const FLASH_LEGACY_SNAPSHOT_ADDR: usize = 0x0801_F000;
-pub const FLASH_LEGACY_ADDR: usize = 0x0801_F800;
+pub const EEPROM_I2C_ADDR: u8 = 0x50;
 
-pub const KEY_RADIO: u8 = 0;
-pub const KEY_MODEL_BASE: u8 = 1;
+/// Compute standard CRC-16 (IBM / Bisync / SDLC, poly 0x8005, init 0x0000, unreversed).
+pub fn crc16(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for &b in data {
+        crc ^= (b as u16) << 8;
+        for _ in 0..8 {
+            if (crc & 0x8000) != 0 {
+                crc = (crc << 1) ^ 0x8005;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    crc
+}
 
-#[allow(dead_code)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum FlashError {
-    AddressMisaligned,
-    LengthMisaligned,
-    OutOfBounds,
-    ProgrammingError,
-    WriteProtectionError,
-    Timeout,
-    UnlockFailed,
+pub enum StorageError {
+    I2cError,
+    EmptySlot,
+    VersionMismatch(u8),
+    LengthMismatch(u16),
+    CrcMismatch,
+    BufferTooSmall,
 }
 
-impl core::fmt::Display for FlashError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:?}", self)
-    }
+/// 8-byte Slot Header:
+/// [0..2] magic: u16 (SLOT_MAGIC = 0x4658, "FX")
+/// [2]    version: u8 (SCHEMA_VERSION = 1)
+/// [3]    flags: u8 (0 = Valid active slot, 0xFF = Deleted)
+/// [4..6] len: u16 LE (exact payload byte length)
+/// [6..8] crc16: u16 LE (CRC-16 over payload)
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct SlotHeader {
+    pub magic: u16,
+    pub version: u8,
+    pub flags: u8,
+    pub len: u16,
+    pub crc16: u16,
 }
 
-impl embedded_storage_async::nor_flash::NorFlashError for FlashError {
-    fn kind(&self) -> embedded_storage_async::nor_flash::NorFlashErrorKind {
-        match self {
-            FlashError::AddressMisaligned | FlashError::LengthMisaligned => {
-                embedded_storage_async::nor_flash::NorFlashErrorKind::NotAligned
-            }
-            FlashError::OutOfBounds => {
-                embedded_storage_async::nor_flash::NorFlashErrorKind::OutOfBounds
-            }
-            _ => embedded_storage_async::nor_flash::NorFlashErrorKind::Other,
+impl SlotHeader {
+    pub fn parse(buf: &[u8; HEADER_SIZE]) -> Self {
+        Self {
+            magic: u16::from_le_bytes([buf[0], buf[1]]),
+            version: buf[2],
+            flags: buf[3],
+            len: u16::from_le_bytes([buf[4], buf[5]]),
+            crc16: u16::from_le_bytes([buf[6], buf[7]]),
         }
     }
-}
 
-#[derive(Clone, Copy)]
-pub struct Stm32Flash;
+    pub fn to_bytes(&self) -> [u8; HEADER_SIZE] {
+        let mut out = [0u8; HEADER_SIZE];
+        out[0..2].copy_from_slice(&self.magic.to_le_bytes());
+        out[2] = self.version;
+        out[3] = self.flags;
+        out[4..6].copy_from_slice(&self.len.to_le_bytes());
+        out[6..8].copy_from_slice(&self.crc16.to_le_bytes());
+        out
+    }
 
-impl embedded_storage_async::nor_flash::ErrorType for Stm32Flash {
-    type Error = FlashError;
-}
-
-impl embedded_storage_async::nor_flash::ReadNorFlash for Stm32Flash {
-    const READ_SIZE: usize = 1;
-
-    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
-        let capacity = self.capacity() as u32;
-        if offset as usize + bytes.len() > capacity as usize {
-            return Err(FlashError::OutOfBounds);
+    pub fn is_valid(&self, expected_len: usize) -> Result<(), StorageError> {
+        if self.magic != SLOT_MAGIC {
+            return Err(StorageError::EmptySlot);
         }
-        let src = offset as *const u8;
-        unsafe {
-            for (i, b) in bytes.iter_mut().enumerate() {
-                *b = core::ptr::read_volatile(src.add(i));
-            }
+        if self.version != SCHEMA_VERSION {
+            return Err(StorageError::VersionMismatch(self.version));
+        }
+        if self.flags != 0 {
+            return Err(StorageError::EmptySlot);
+        }
+        if self.len as usize != expected_len {
+            return Err(StorageError::LengthMismatch(self.len));
         }
         Ok(())
     }
-
-    fn capacity(&self) -> usize {
-        0x0802_0000
-    }
 }
 
-impl embedded_storage_async::nor_flash::NorFlash for Stm32Flash {
-    const WRITE_SIZE: usize = 2; // 16-bit halfword programming on STM32F0
-    const ERASE_SIZE: usize = 2048; // 2 KB page erase
+/// Direct hardware I2C2 EEPROM driver for FT24C128A (PB10 = SCL, PB11 = SDA).
+#[cfg(not(test))]
+pub struct EepromI2c;
 
-    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-        if !from.is_multiple_of(2048) || !to.is_multiple_of(2048) || from >= to {
-            return Err(FlashError::AddressMisaligned);
-        }
+#[cfg(not(test))]
+impl EepromI2c {
+    /// Initialize I2C2 peripheral on PB10 (SCL) and PB11 (SDA) at ~1000 kHz Fast Mode Plus (Fm+).
+    pub fn init() {
+        let rcc = unsafe { &*stm32f0xx_hal::pac::RCC::ptr() };
+        let gpiob = unsafe { &*stm32f0xx_hal::pac::GPIOB::ptr() };
+        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
+        let syscfg = unsafe { &*stm32f0xx_hal::pac::SYSCFG::ptr() };
 
-        cortex_m::interrupt::free(|_| unsafe {
-            let flash = &*pac::FLASH::ptr();
+        // 1. Enable GPIOB, SYSCFG, and I2C2 clocks
+        rcc.ahbenr.modify(|_, w| w.iopben().enabled());
+        rcc.apb2enr.modify(|_, w| w.syscfgen().enabled());
+        rcc.apb1enr.modify(|_, w| w.i2c2en().enabled());
 
-            if flash.cr.read().lock().bit_is_set() {
-                flash.keyr.write(|w| w.bits(FLASH_KEY1));
-                flash.keyr.write(|w| w.bits(FLASH_KEY2));
-            }
-            if flash.cr.read().lock().bit_is_set() {
-                return Err(FlashError::UnlockFailed);
-            }
+        // 2. Enable Fast Mode Plus (Fm+ 20 mA high-drive sink) on I2C2 pins in SYSCFG
+        syscfg.cfgr1.modify(|_, w| w.i2c2_fmp().fmp());
 
-            let mut page_addr = from;
-            while page_addr < to {
-                crate::watchdog::feed();
+        // 3. Configure PB10 and PB11 as Alternate Function 1 (I2C2), Open-Drain, High-Speed, Pull-up
+        gpiob.afrh.modify(|_, w| w.afrh10().af1().afrh11().af1());
+        gpiob.moder.modify(|_, w| w.moder10().alternate().moder11().alternate());
+        gpiob.otyper.modify(|_, w| w.ot10().open_drain().ot11().open_drain());
+        gpiob.ospeedr.modify(|_, w| w.ospeedr10().high_speed().ospeedr11().high_speed());
+        gpiob.pupdr.modify(|_, w| w.pupdr10().pull_up().pupdr11().pull_up());
 
-                let mut timeout = 1_000_000u32;
-                while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
-                    timeout -= 1;
-                }
-                if timeout == 0 {
-                    return Err(FlashError::Timeout);
-                }
+        // 4. Disable I2C2 while configuring timing
+        i2c2.cr1.modify(|_, w| w.pe().disabled());
 
-                flash
-                    .sr
-                    .write(|w| w.eop().event().wrprt().error().pgerr().error());
+        // Timing for 48 MHz APB1/SYSCLK -> 1 MHz (1000 kHz) Fast Mode Plus (Fm+)
+        // PRESC=0, SCLDEL=3 (~80ns), SDADEL=0, SCLH=9 (~250ns), SCLL=25 (~650ns)
+        // Total I2C cycle = (1 + 9 + 1 + 25) * 20.83ns = 750ns nominal bus + rise/fall -> 1.0 MHz
+        i2c2.timingr.write(|w| {
+            w.presc().bits(0)
+                .scldel().bits(3)
+                .sdadel().bits(0)
+                .sclh().bits(9)
+                .scll().bits(25)
+        });
 
-                flash.cr.write_with_zero(|w| w.per().page_erase());
-                flash.ar.write_with_zero(|w| w.far().bits(page_addr));
-                flash
-                    .cr
-                    .write_with_zero(|w| w.per().page_erase().strt().start());
-
-                timeout = 1_000_000;
-                while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
-                    timeout -= 1;
-                }
-                if timeout == 0 {
-                    return Err(FlashError::Timeout);
-                }
-
-                if flash.sr.read().wrprt().is_error() {
-                    flash.sr.write(|w| w.wrprt().error());
-                    return Err(FlashError::WriteProtectionError);
-                }
-                flash.sr.write(|w| w.eop().event());
-
-                page_addr += 2048;
-            }
-
-            flash.cr.write_with_zero(|w| w.bits(0));
-            flash.cr.write(|w| w.lock().locked());
-            crate::watchdog::feed();
-
-            Ok(())
-        })
+        // 5. Enable I2C2 peripheral
+        i2c2.cr1.modify(|_, w| w.pe().enabled());
     }
 
-    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-        if !offset.is_multiple_of(2) || !bytes.len().is_multiple_of(2) {
-            return Err(FlashError::AddressMisaligned);
-        }
-        if bytes.is_empty() {
+    /// Read sequential bytes starting at 16-bit EEPROM `addr`.
+    pub fn read(addr: u16, data: &mut [u8]) -> Result<(), StorageError> {
+        if data.is_empty() {
             return Ok(());
         }
 
-        cortex_m::interrupt::free(|_| unsafe {
-            let flash = &*pac::FLASH::ptr();
+        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
 
-            if flash.cr.read().lock().bit_is_set() {
-                flash.keyr.write(|w| w.bits(FLASH_KEY1));
-                flash.keyr.write(|w| w.bits(FLASH_KEY2));
-            }
-            if flash.cr.read().lock().bit_is_set() {
-                return Err(FlashError::UnlockFailed);
-            }
+        // 1. Send 2-byte memory address write header without STOP (autoend=false)
+        let addr_bytes = addr.to_be_bytes();
+        i2c2.cr2.write(|w| {
+            w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
+                .nbytes().bits(2)
+                .rd_wrn().write()
+                .autoend().software()
+                .start().start()
+        });
 
-            let mut timeout = 1_000_000u32;
-            while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
+        for &byte in &addr_bytes {
+            let mut timeout = 100_000u32;
+            while i2c2.isr.read().txis().bit_is_clear() {
+                if i2c2.isr.read().nackf().bit_is_set() {
+                    i2c2.icr.write(|w| w.nackcf().clear());
+                    return Err(StorageError::I2cError);
+                }
                 timeout -= 1;
-            }
-            if timeout == 0 {
-                return Err(FlashError::Timeout);
-            }
-
-            flash
-                .sr
-                .write(|w| w.eop().event().wrprt().error().pgerr().error());
-            flash.cr.write_with_zero(|w| w.pg().program());
-
-            let halfwords = bytes.len() / 2;
-            let src = bytes.as_ptr() as *const u16;
-            let dst = offset as *mut u16;
-
-            for i in 0..halfwords {
-                let hw = core::ptr::read_unaligned(src.add(i));
-                core::ptr::write_volatile(dst.add(i), hw);
-
-                timeout = 100_000;
-                while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
-                    timeout -= 1;
-                }
                 if timeout == 0 {
-                    flash.cr.write_with_zero(|w| w.bits(0));
-                    flash.cr.write(|w| w.lock().locked());
-                    return Err(FlashError::Timeout);
+                    return Err(StorageError::I2cError);
                 }
+            }
+            i2c2.txdr.write(|w| w.txdata().bits(byte));
+        }
 
-                let sr = flash.sr.read();
-                if sr.pgerr().is_error() {
-                    flash.sr.write(|w| w.pgerr().error());
-                    flash.cr.write_with_zero(|w| w.bits(0));
-                    flash.cr.write(|w| w.lock().locked());
-                    return Err(FlashError::ProgrammingError);
-                }
-                if sr.wrprt().is_error() {
-                    flash.sr.write(|w| w.wrprt().error());
-                    flash.cr.write_with_zero(|w| w.bits(0));
-                    flash.cr.write(|w| w.lock().locked());
-                    return Err(FlashError::WriteProtectionError);
-                }
-                flash.sr.write(|w| w.eop().event());
+        // Wait for TC (Transfer Complete)
+        let mut timeout = 100_000u32;
+        while i2c2.isr.read().tc().bit_is_clear() {
+            timeout -= 1;
+            if timeout == 0 {
+                return Err(StorageError::I2cError);
+            }
+        }
 
-                if (i & 0x7F) == 0 {
+        // 2. Read sequential data bytes in chunks of up to 255 bytes (NBYTES limitation)
+        let mut read_offset = 0;
+        while read_offset < data.len() {
+            let chunk_len = core::cmp::min(255, data.len() - read_offset);
+            let is_last = (read_offset + chunk_len) == data.len();
+
+            i2c2.cr2.write(|w| {
+                w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
+                    .nbytes().bits(chunk_len as u8)
+                    .rd_wrn().read()
+                    .autoend().bit(is_last)
+                    .start().start()
+            });
+
+            for i in 0..chunk_len {
+                let mut byte_timeout = 100_000u32;
+                while i2c2.isr.read().rxne().bit_is_clear() {
+                    byte_timeout -= 1;
+                    if byte_timeout == 0 {
+                        return Err(StorageError::I2cError);
+                    }
+                }
+                data[read_offset + i] = i2c2.rxdr.read().rxdata().bits();
+            }
+
+            if !is_last {
+                let mut tc_timeout = 100_000u32;
+                while i2c2.isr.read().tc().bit_is_clear() {
+                    tc_timeout -= 1;
+                    if tc_timeout == 0 {
+                        return Err(StorageError::I2cError);
+                    }
+                }
+            } else {
+                let mut stop_timeout = 100_000u32;
+                while i2c2.isr.read().stopf().bit_is_clear() {
+                    stop_timeout -= 1;
+                    if stop_timeout == 0 {
+                        break;
+                    }
+                }
+                i2c2.icr.write(|w| w.stopcf().clear());
+            }
+
+            read_offset += chunk_len;
+        }
+
+        Ok(())
+    }
+
+    /// Write a single page chunk (up to 64 bytes) that does NOT cross a 64-byte boundary.
+    fn write_page_aligned(addr: u16, chunk: &[u8]) -> Result<(), StorageError> {
+        if chunk.is_empty() {
+            return Ok(());
+        }
+
+        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
+        let total_bytes = (2 + chunk.len()) as u8;
+        let addr_bytes = addr.to_be_bytes();
+
+        i2c2.cr2.write(|w| {
+            w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
+                .nbytes().bits(total_bytes)
+                .rd_wrn().write()
+                .autoend().automatic()
+                .start().start()
+        });
+
+        // 1. Send 2 address bytes
+        for &byte in &addr_bytes {
+            let mut timeout = 100_000u32;
+            while i2c2.isr.read().txis().bit_is_clear() {
+                if i2c2.isr.read().nackf().bit_is_set() {
+                    i2c2.icr.write(|w| w.nackcf().clear());
+                    return Err(StorageError::I2cError);
+                }
+                timeout -= 1;
+                if timeout == 0 {
+                    return Err(StorageError::I2cError);
+                }
+            }
+            i2c2.txdr.write(|w| w.txdata().bits(byte));
+        }
+
+        // 2. Send payload bytes
+        for &byte in chunk {
+            let mut timeout = 100_000u32;
+            while i2c2.isr.read().txis().bit_is_clear() {
+                if i2c2.isr.read().nackf().bit_is_set() {
+                    i2c2.icr.write(|w| w.nackcf().clear());
+                    return Err(StorageError::I2cError);
+                }
+                timeout -= 1;
+                if timeout == 0 {
+                    return Err(StorageError::I2cError);
+                }
+            }
+            i2c2.txdr.write(|w| w.txdata().bits(byte));
+        }
+
+        // Wait for STOPF
+        let mut stop_timeout = 100_000u32;
+        while i2c2.isr.read().stopf().bit_is_clear() {
+            stop_timeout -= 1;
+            if stop_timeout == 0 {
+                break;
+            }
+        }
+        i2c2.icr.write(|w| w.stopcf().clear());
+
+        // 3. ACK Polling for EEPROM internal write cycle (max 5ms)
+        Self::poll_ack();
+
+        Ok(())
+    }
+
+    /// Poll I2C address until EEPROM ACKs that its internal self-timed write cycle has completed.
+    fn poll_ack() {
+        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
+        let mut retries = 50u32; // up to ~10ms total polling
+
+        while retries > 0 {
+            crate::watchdog::feed();
+            retries -= 1;
+
+            // Send 0-byte write to test device readiness
+            i2c2.cr2.write(|w| {
+                w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
+                    .nbytes().bits(0)
+                    .rd_wrn().write()
+                    .autoend().automatic()
+                    .start().start()
+            });
+
+            let mut wait = 20_000u32;
+            let mut got_nack = false;
+            while i2c2.isr.read().stopf().bit_is_clear() && wait > 0 {
+                if i2c2.isr.read().nackf().bit_is_set() {
+                    got_nack = true;
+                    i2c2.icr.write(|w| w.nackcf().clear());
+                }
+                wait -= 1;
+            }
+            i2c2.icr.write(|w| w.stopcf().clear());
+
+            if !got_nack && wait > 0 {
+                return; // Device ACKed, write complete!
+            }
+
+            {
+                let start = crate::time::millis();
+                while crate::time::millis().wrapping_sub(start) < 1 {
                     crate::watchdog::feed();
                 }
             }
+        }
+    }
 
-            flash.cr.write_with_zero(|w| w.bits(0));
-            flash.cr.write(|w| w.lock().locked());
-            crate::watchdog::feed();
+    /// Write arbitrary slice with automatic 64-byte page boundary splitting to prevent wrap-around.
+    pub fn write(mut addr: u16, data: &[u8]) -> Result<(), StorageError> {
+        let mut written = 0;
+        while written < data.len() {
+            let page_offset = (addr % (PAGE_SIZE as u16)) as usize;
+            let chunk_len = core::cmp::min(PAGE_SIZE - page_offset, data.len() - written);
 
-            Ok(())
-        })
+            let chunk = &data[written..written + chunk_len];
+            Self::write_page_aligned(addr, chunk)?;
+
+            addr = addr.saturating_add(chunk_len as u16);
+            written += chunk_len;
+        }
+        Ok(())
     }
 }
 
-impl embedded_storage_async::nor_flash::MultiwriteNorFlash for Stm32Flash {}
+/// Legacy ModelConfig v1 (128 bytes) from prior releases.
+/// Used for transparent, lossless migration to v2 (348 bytes).
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct LegacyModelConfigV1 {
+    pub name: [u8; 10],
+    pub model_type: u8,
+    pub _pad0: u8,
+    pub rx_id: u32,
+    pub trims: [i8; 4],
+    pub channel_reverse: u32,
+    pub dr_switch: u8,
+    pub thr_curve_pts: u8,
+    pub thr_curve_smooth: u8,
+    pub thr_curve: [u8; 9],
+    pub dr_high: [u8; 3],
+    pub dr_low: [u8; 3],
+    pub expo_high: [i8; 3],
+    pub expo_low: [i8; 3],
+    pub timer_secs: u16,
+    pub timer_source: u8,
+    pub rf_power: u8,
+    pub failsafe_thr: u16,
+    pub aux_channels: [u8; 14],
+    pub wing_tail_mix: u8,
+    pub template_diff: i8,
+    pub mixes: [LegacyMixLineV1; 8],
+    pub failsafe_mode: u8,
+    pub failsafe_timeout: u8,
+    pub rf_protocol: u8,
+    pub crsf_baud: u8,
+    pub arm_switch: u8,
+    pub rx_out_mode: u8,
+    pub servo_rate_hz: u16,
+    pub rx_serial_proto: u8,
+    pub crsf_half_duplex: u8,
+}
 
-fn block_on<F: core::future::Future>(mut future: F) -> F::Output {
-    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct LegacyMixLineV1 {
+    pub target_ch: u8,
+    pub source: u8,
+    pub weight: i8,
+    pub offset: i8,
+    pub switch: u8,
+    pub mode: u8,
+}
 
-    fn noop_clone(_: *const ()) -> RawWaker {
-        RawWaker::new(core::ptr::null(), &NOOP_VTABLE)
+const _: () = assert!(core::mem::size_of::<LegacyModelConfigV1>() == 128);
+const _: () = assert!(core::mem::size_of::<LegacyMixLineV1>() == 6);
+
+pub fn unpack_legacy_v1_model(v1: &LegacyModelConfigV1) -> ModelConfig {
+    let mut v2 = ModelConfig::default_for_index(0);
+    v2.name = v1.name;
+    v2.model_type = v1.model_type;
+    v2.rx_id = v1.rx_id;
+    v2.trims = v1.trims;
+    v2.channel_reverse = v1.channel_reverse;
+    v2.dr_switch = v1.dr_switch;
+    v2.thr_curve_pts = v1.thr_curve_pts;
+    v2.thr_curve_smooth = v1.thr_curve_smooth;
+    // Copy the first 9 curve points, rest are 0
+    v2.thr_curve[0..9].copy_from_slice(&v1.thr_curve);
+    v2.dr_high = v1.dr_high;
+    v2.dr_low = v1.dr_low;
+    v2.expo_high = v1.expo_high;
+    v2.expo_low = v1.expo_low;
+    v2.timer_secs = v1.timer_secs;
+    v2.timer_source = v1.timer_source;
+    v2.rf_power = v1.rf_power;
+    v2.failsafe_thr = v1.failsafe_thr;
+    v2.aux_channels = v1.aux_channels;
+    v2.wing_tail_mix = v1.wing_tail_mix;
+    v2.template_diff = v1.template_diff;
+
+    // Migrate first 8 mixer lines
+    for i in 0..8 {
+        v2.mixes[i] = MixLine {
+            target_ch: v1.mixes[i].target_ch,
+            source: v1.mixes[i].source,
+            weight_src: 0, // default fixed weight
+            weight: v1.mixes[i].weight,
+            offset: v1.mixes[i].offset,
+            switch: v1.mixes[i].switch,
+            mode: v1.mixes[i].mode,
+            _reserved: 0,
+        };
     }
-    fn noop(_: *const ()) {}
+    // Remaining lines 8..32 remain disabled
 
-    static NOOP_VTABLE: RawWakerVTable = RawWakerVTable::new(noop_clone, noop, noop, noop);
-    let raw_waker = RawWaker::new(core::ptr::null(), &NOOP_VTABLE);
-    let waker = unsafe { Waker::from_raw(raw_waker) };
-    let mut cx = Context::from_waker(&waker);
+    v2.failsafe_mode = v1.failsafe_mode;
+    v2.failsafe_timeout = v1.failsafe_timeout;
+    v2.rf_protocol = v1.rf_protocol;
+    v2.crsf_baud = v1.crsf_baud;
+    v2.arm_switch = v1.arm_switch;
+    v2.rx_out_mode = v1.rx_out_mode;
+    v2.servo_rate_hz = v1.servo_rate_hz;
+    v2.rx_serial_proto = v1.rx_serial_proto;
+    v2.crsf_half_duplex = v1.crsf_half_duplex;
 
-    let mut pinned = unsafe { core::pin::Pin::new_unchecked(&mut future) };
-    loop {
-        match pinned.as_mut().poll(&mut cx) {
-            Poll::Ready(output) => return output,
-            Poll::Pending => {
-                crate::watchdog::feed();
+    v2
+}
+
+/// Helper to read a raw C struct from an EEPROM slot with 8-byte framing and CRC16 verification.
+pub fn load_slot<T: Copy>(addr: u16, dst: &mut T) -> Result<(), StorageError> {
+    #[cfg(test)]
+    {
+        let _ = addr;
+        let _ = dst;
+        return Err(StorageError::EmptySlot);
+    }
+
+    #[cfg(not(test))]
+    {
+        // 1. Read 8-byte slot header
+        let mut hdr_bytes = [0u8; HEADER_SIZE];
+        EepromI2c::read(addr, &mut hdr_bytes)?;
+        let hdr = SlotHeader::parse(&hdr_bytes);
+
+        let expected_size = core::mem::size_of::<T>();
+
+        // Check if this is a ModelConfig request and the slot holds legacy v1 (128 bytes)
+        if expected_size == core::mem::size_of::<ModelConfig>() && hdr.len == 128 && hdr.magic == SLOT_MAGIC && hdr.flags == 0 {
+            // Read 128 bytes of legacy model
+            let mut v1 = core::mem::MaybeUninit::<LegacyModelConfigV1>::uninit();
+            let v1_bytes = unsafe {
+                core::slice::from_raw_parts_mut(v1.as_mut_ptr() as *mut u8, 128)
+            };
+            EepromI2c::read(addr + HEADER_SIZE as u16, v1_bytes)?;
+
+            // Verify CRC-16 of legacy payload
+            let computed_crc = crc16(v1_bytes);
+            if computed_crc != hdr.crc16 {
+                return Err(StorageError::CrcMismatch);
             }
+
+            let legacy_model = unsafe { v1.assume_init() };
+            let v2_model = unpack_legacy_v1_model(&legacy_model);
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &v2_model as *const ModelConfig as *const T,
+                    dst as *mut T,
+                    1,
+                );
+            }
+
+            // In-place upgrade: re-save slot as v2 (348 bytes) with updated CRC-16 envelope
+            let _ = save_slot(addr, &v2_model);
+
+            return Ok(());
         }
+
+        hdr.is_valid(expected_size)?;
+
+        // 2. Read payload directly into destination struct
+        let dst_bytes = unsafe {
+            core::slice::from_raw_parts_mut(dst as *mut T as *mut u8, expected_size)
+        };
+        EepromI2c::read(addr + HEADER_SIZE as u16, dst_bytes)?;
+
+        // 3. Verify CRC-16
+        let computed_crc = crc16(dst_bytes);
+        if computed_crc != hdr.crc16 {
+            return Err(StorageError::CrcMismatch);
+        }
+
+        Ok(())
     }
 }
 
-#[inline(always)]
-fn storage_config() -> sequential_storage::map::MapConfig<Stm32Flash> {
-    sequential_storage::map::MapConfig::new(FLASH_STORAGE_ADDR as u32..FLASH_STORAGE_END as u32)
-}
-
-impl<'a> sequential_storage::map::Value<'a> for RadioConfig {
-    fn serialize_into(
-        &self,
-        buffer: &mut [u8],
-    ) -> Result<usize, sequential_storage::map::SerializationError> {
-        let size = core::mem::size_of::<Self>();
-        if buffer.len() < size {
-            return Err(sequential_storage::map::SerializationError::BufferTooSmall);
-        }
-        let src = self as *const Self as *const u8;
-        unsafe {
-            core::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), size);
-        }
-        Ok(size)
+/// Helper to write a raw C struct into an EEPROM slot with 8-byte framing and CRC16.
+pub fn save_slot<T: Copy>(addr: u16, src: &T) -> Result<(), StorageError> {
+    #[cfg(test)]
+    {
+        let _ = addr;
+        let _ = src;
+        return Ok(());
     }
 
-    fn deserialize_from(
-        buffer: &'a [u8],
-    ) -> Result<(Self, usize), sequential_storage::map::SerializationError> {
-        let size = core::mem::size_of::<Self>();
-        if buffer.len() < size {
-            return Err(sequential_storage::map::SerializationError::BufferTooSmall);
-        }
-        let mut val = Self::default_factory();
-        let dst = &mut val as *mut Self as *mut u8;
-        unsafe {
-            core::ptr::copy_nonoverlapping(buffer.as_ptr(), dst, size);
-        }
-        Ok((val, size))
-    }
-}
+    #[cfg(not(test))]
+    {
+        let size = core::mem::size_of::<T>();
+        let src_bytes = unsafe {
+            core::slice::from_raw_parts(src as *const T as *const u8, size)
+        };
 
-impl<'a> sequential_storage::map::Value<'a> for ModelConfig {
-    fn serialize_into(
-        &self,
-        buffer: &mut [u8],
-    ) -> Result<usize, sequential_storage::map::SerializationError> {
-        let size = core::mem::size_of::<Self>();
-        if buffer.len() < size {
-            return Err(sequential_storage::map::SerializationError::BufferTooSmall);
-        }
-        let src = self as *const Self as *const u8;
-        unsafe {
-            core::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), size);
-        }
-        Ok(size)
-    }
+        let crc = crc16(src_bytes);
+        let hdr = SlotHeader {
+            magic: SLOT_MAGIC,
+            version: SCHEMA_VERSION,
+            flags: 0,
+            len: size as u16,
+            crc16: crc,
+        };
 
-    fn deserialize_from(
-        buffer: &'a [u8],
-    ) -> Result<(Self, usize), sequential_storage::map::SerializationError> {
-        let size = core::mem::size_of::<Self>();
-        if buffer.len() < size {
-            return Err(sequential_storage::map::SerializationError::BufferTooSmall);
-        }
-        let mut val = Self::default_for_index(0);
-        let dst = &mut val as *mut Self as *mut u8;
-        unsafe {
-            core::ptr::copy_nonoverlapping(buffer.as_ptr(), dst, size);
-        }
-        Ok((val, size))
+        // Write header first
+        let hdr_bytes = hdr.to_bytes();
+        EepromI2c::write(addr, &hdr_bytes)?;
+
+        // Write struct payload
+        EepromI2c::write(addr + HEADER_SIZE as u16, src_bytes)?;
+
+        Ok(())
     }
 }
 
-fn format_and_save_all(storage: &RadioStorage) {
-    let mut flash = Stm32Flash;
-    let _ = block_on(flash.erase(FLASH_STORAGE_ADDR as u32, FLASH_STORAGE_END as u32));
+/// Read only model name and magic without transferring the entire ModelConfig.
+pub fn peek_model_name(slot_idx: usize) -> Option<[u8; 10]> {
+    #[cfg(test)]
+    {
+        let _ = slot_idx;
+        None
+    }
+    #[cfg(not(test))]
+    {
+        let addr = model_slot_addr(slot_idx)?;
+        // Read 8-byte header + first 10 bytes (ModelConfig::name) = 18 bytes
+        let mut buf = [0u8; HEADER_SIZE + 10];
+        if EepromI2c::read(addr, &mut buf).is_err() {
+            return None;
+        }
 
-    let mut map = sequential_storage::map::MapStorage::new(
-        flash,
-        storage_config(),
-        sequential_storage::cache::Cache::new_uncached(),
-    );
-    let mut buf = [0u8; 256];
-    let _ = block_on(map.store_item(&mut buf, &KEY_RADIO, &storage.radio));
-    for idx in 0..NUM_MODELS {
-        let key = KEY_MODEL_BASE + idx as u8;
-        let _ = block_on(map.store_item(&mut buf, &key, &storage.models[idx]));
+        let hdr = SlotHeader::parse(unsafe { &*(buf[0..HEADER_SIZE].as_ptr() as *const [u8; HEADER_SIZE]) });
+        if hdr.magic != SLOT_MAGIC || hdr.flags != 0 {
+            return None;
+        }
+        if hdr.len != (core::mem::size_of::<ModelConfig>() as u16) && hdr.len != 128 {
+            return None;
+        }
+
+        let mut name = [0u8; 10];
+        name.copy_from_slice(&buf[HEADER_SIZE..HEADER_SIZE + 10]);
+        Some(name)
     }
 }
 
+/// Delete a model slot in O(1) by invalidating the magic bytes in the 8-byte header.
+pub fn delete_model_slot(slot_idx: usize) -> bool {
+    #[cfg(test)]
+    {
+        let _ = slot_idx;
+        true
+    }
+    #[cfg(not(test))]
+    {
+        let Some(addr) = model_slot_addr(slot_idx) else {
+            return false;
+        };
+        // Overwrite magic with 0xFFFF to invalidate slot
+        let invalid_magic = [0xFFu8, 0xFFu8];
+        EepromI2c::write(addr, &invalid_magic).is_ok()
+    }
+}
+
+/// Initialize EEPROM peripheral and load radio storage into memory.
 #[inline(never)]
 pub fn load_storage_into(storage: &mut RadioStorage) {
     #[cfg(test)]
@@ -1009,51 +1626,65 @@ pub fn load_storage_into(storage: &mut RadioStorage) {
 
     #[cfg(not(test))]
     {
-        let mut map = sequential_storage::map::MapStorage::new(
-            Stm32Flash,
-            storage_config(),
-            sequential_storage::cache::Cache::new_uncached(),
-        );
-        let mut buf = [0u8; 256];
+        EepromI2c::init();
 
-        let radio_res: Result<Option<RadioConfig>, _> =
-            block_on(map.fetch_item(&mut buf, &KEY_RADIO));
-        if let Ok(Some(cfg)) = radio_res {
-            if cfg.magic == FLASH_MAGIC && cfg.version == CONFIG_VERSION {
-                storage.radio = cfg;
-                for idx in 0..NUM_MODELS {
-                    let key = KEY_MODEL_BASE + idx as u8;
-                    if let Ok(Some(m)) = block_on(map.fetch_item(&mut buf, &key)) {
-                        storage.models[idx] = m;
-                    } else {
-                        storage.models[idx] = ModelConfig::default_for_index(idx);
-                    }
-                }
-                storage.sanitize();
-                return;
-            }
+        // 1. Try loading RadioConfig from Primary Slot A
+        let mut radio_loaded = false;
+        if load_slot(RADIO_SLOT_A_ADDR, &mut storage.radio).is_ok() {
+            radio_loaded = true;
+        } else if load_slot(RADIO_SLOT_B_ADDR, &mut storage.radio).is_ok() {
+            // Primary Slot A failed, but Backup Slot B succeeded!
+            radio_loaded = true;
+            // Restore Slot A from Slot B
+            let _ = save_slot(RADIO_SLOT_A_ADDR, &storage.radio);
         }
 
-        // Migration: Check legacy snapshot base
-        unsafe {
-            let snap_magic = core::ptr::read_volatile(FLASH_LEGACY_SNAPSHOT_ADDR as *const u32);
-            let snap_ver = core::ptr::read_volatile((FLASH_LEGACY_SNAPSHOT_ADDR + 4) as *const u32);
-            if snap_magic == FLASH_MAGIC && snap_ver == CONFIG_VERSION {
-                let src = FLASH_LEGACY_SNAPSHOT_ADDR as *const u32;
-                let dst = storage as *mut RadioStorage as *mut u32;
-                let word_count = core::mem::size_of::<RadioStorage>() / 4;
-                for i in 0..word_count {
-                    *dst.add(i) = core::ptr::read_volatile(src.add(i));
-                }
-                storage.sanitize();
-                format_and_save_all(storage);
-                return;
-            }
-
-            // Clean factory default initialization
+        if !radio_loaded {
+            // Fresh / uninitialized EEPROM -> load factory defaults and save to Slot A and B
             storage.init_default();
-            format_and_save_all(storage);
+            let _ = save_slot(RADIO_SLOT_A_ADDR, &storage.radio);
+            let _ = save_slot(RADIO_SLOT_B_ADDR, &storage.radio);
+            if let Some(addr) = model_slot_addr(0) {
+                let _ = save_slot(addr, &storage.active_model);
+            }
+            storage.sanitize();
+            return;
         }
+
+        // 2. Load only the active model into the active-model SRAM cache
+        let active_idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
+        if let Some(addr) = model_slot_addr(active_idx) {
+            if load_slot(addr, &mut storage.active_model).is_err() {
+                storage.active_model = ModelConfig::default_for_index(active_idx);
+            }
+        } else {
+            storage.active_model = ModelConfig::default_for_index(0);
+        }
+
+        storage.sanitize();
+    }
+}
+
+/// Load a specific model slot into `storage.active_model`.
+pub fn load_active_model(storage: &mut RadioStorage) -> bool {
+    let active_idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
+    if let Some(addr) = model_slot_addr(active_idx) {
+        if load_slot(addr, &mut storage.active_model).is_ok() {
+            storage.sanitize();
+            return true;
+        }
+    }
+    storage.active_model = ModelConfig::default_for_index(active_idx);
+    storage.sanitize();
+    false
+}
+
+/// Save arbitrary ModelConfig to an arbitrary model slot index.
+pub fn save_model_to_slot(slot_idx: usize, model: &ModelConfig) -> bool {
+    if let Some(addr) = model_slot_addr(slot_idx) {
+        save_slot(addr, model).is_ok()
+    } else {
+        false
     }
 }
 
@@ -1064,6 +1695,7 @@ pub fn load_storage() -> RadioStorage {
     storage
 }
 
+/// Save the currently active model to its dedicated EEPROM slot.
 pub fn save_active_model(storage: &RadioStorage) -> bool {
     #[cfg(test)]
     {
@@ -1072,18 +1704,12 @@ pub fn save_active_model(storage: &RadioStorage) -> bool {
     }
     #[cfg(not(test))]
     {
-        let mut map = sequential_storage::map::MapStorage::new(
-            Stm32Flash,
-            storage_config(),
-            sequential_storage::cache::Cache::new_uncached(),
-        );
-        let mut buf = [0u8; 256];
         let idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
-        let key = KEY_MODEL_BASE + idx as u8;
-        block_on(map.store_item(&mut buf, &key, &storage.models[idx])).is_ok()
+        save_model_to_slot(idx, &storage.active_model)
     }
 }
 
+/// Save RadioConfig using A/B ping-pong save to ensure power-loss safety.
 pub fn save_radio_config(storage: &RadioStorage) -> bool {
     #[cfg(test)]
     {
@@ -1092,13 +1718,10 @@ pub fn save_radio_config(storage: &RadioStorage) -> bool {
     }
     #[cfg(not(test))]
     {
-        let mut map = sequential_storage::map::MapStorage::new(
-            Stm32Flash,
-            storage_config(),
-            sequential_storage::cache::Cache::new_uncached(),
-        );
-        let mut buf = [0u8; 256];
-        block_on(map.store_item(&mut buf, &KEY_RADIO, &storage.radio)).is_ok()
+        // Save to Backup Slot B first, then to Primary Slot A
+        let ok_b = save_slot(RADIO_SLOT_B_ADDR, &storage.radio).is_ok();
+        let ok_a = save_slot(RADIO_SLOT_A_ADDR, &storage.radio).is_ok();
+        ok_a || ok_b
     }
 }
 
@@ -1114,24 +1737,22 @@ pub fn load_config() -> RadioConfig {
     storage.radio
 }
 
-/// Read persisted receiver ID from Flash if previously bound.
+/// Read persisted receiver ID from active model if previously bound.
 pub fn load_saved_rx_id() -> Option<u32> {
-    let mut map = sequential_storage::map::MapStorage::new(
-        Stm32Flash,
-        storage_config(),
-        sequential_storage::cache::Cache::new_uncached(),
-    );
-    let mut buf = [0u8; 256];
-    if let Ok(Some(radio)) = block_on(map.fetch_item::<RadioConfig>(&mut buf, &KEY_RADIO)) {
-        let active_idx = (radio.active_model as usize).min(NUM_MODELS - 1);
-        let key = KEY_MODEL_BASE + active_idx as u8;
-        if let Ok(Some(model)) = block_on(map.fetch_item::<ModelConfig>(&mut buf, &key)) {
-            if model.rx_id != 0 && model.rx_id != 0xFFFF_FFFF {
-                return Some(model.rx_id);
-            }
+    #[cfg(test)]
+    {
+        None
+    }
+    #[cfg(not(test))]
+    {
+        let storage = get_storage();
+        let active = storage.active_model();
+        if active.rx_id != 0 && active.rx_id != 0xFFFF_FFFF {
+            Some(active.rx_id)
+        } else {
+            None
         }
     }
-    None
 }
 
 #[cfg(test)]
@@ -1170,16 +1791,87 @@ mod tests {
 
     #[test]
     fn test_model_config_size_and_rf_power() {
-        assert_eq!(core::mem::size_of::<ModelConfig>(), 128);
+        assert_eq!(core::mem::size_of::<ModelConfig>(), 348);
         assert_eq!(core::mem::size_of::<RadioConfig>(), 140);
+        assert_eq!(core::mem::size_of::<RadioStorage>(), 488);
 
         let default_m = ModelConfig::default_for_index(0);
         assert_eq!(default_m.rf_power, 0);
 
         let mut storage = RadioStorage::default_factory();
-        storage.models[0].rf_power = 99;
+        storage.active_model.rf_power = 99;
         storage.sanitize();
-        assert_eq!(storage.models[0].rf_power, 0);
+        assert_eq!(storage.active_model.rf_power, 0);
+    }
+
+    #[test]
+    fn test_legacy_v1_migration() {
+        let v1 = LegacyModelConfigV1 {
+            name: *b"PLANE 01  ",
+            model_type: 1, // Glider
+            _pad0: 0,
+            rx_id: 0x1234_5678,
+            trims: [5, -3, 2, 0],
+            channel_reverse: 0x05,
+            dr_switch: 2,
+            thr_curve_pts: 9,
+            thr_curve_smooth: 1,
+            thr_curve: [0, 10, 25, 40, 55, 70, 80, 90, 100],
+            dr_high: [90, 85, 80],
+            dr_low: [60, 55, 50],
+            expo_high: [20, -10, 0],
+            expo_low: [10, -5, 0],
+            timer_secs: 420,
+            timer_source: 2,
+            rf_power: 1,
+            failsafe_thr: 980,
+            aux_channels: [7, 8, 5, 6, 9, 10, 11, 12, 0, 0, 0, 0, 0, 0],
+            wing_tail_mix: 2,
+            template_diff: 15,
+            mixes: [LegacyMixLineV1 {
+                target_ch: 1,
+                source: 2,
+                weight: 50,
+                offset: -10,
+                switch: 3,
+                mode: 1,
+            }; 8],
+            failsafe_mode: 1,
+            failsafe_timeout: 30,
+            rf_protocol: 1,
+            crsf_baud: 3,
+            arm_switch: 4,
+            rx_out_mode: 1,
+            servo_rate_hz: 200,
+            rx_serial_proto: 1,
+            crsf_half_duplex: 1,
+        };
+        let v2 = unpack_legacy_v1_model(&v1);
+        assert_eq!(&v2.name, b"PLANE 01  ");
+        assert_eq!(v2.model_type, 1);
+        assert_eq!(v2.rx_id, 0x1234_5678);
+        assert_eq!(v2.trims, [5, -3, 2, 0]);
+        assert_eq!(v2.channel_reverse, 0x05);
+        assert_eq!(v2.dr_switch, 2);
+        assert_eq!(v2.thr_curve_pts, 9);
+        assert_eq!(v2.thr_curve_smooth, 1);
+        assert_eq!(&v2.thr_curve[0..9], &[0, 10, 25, 40, 55, 70, 80, 90, 100]);
+        assert_eq!(&v2.thr_curve[9..17], &[0; 8]);
+        assert_eq!(v2.timer_secs, 420);
+        assert_eq!(v2.template_diff, 15);
+        assert_eq!(v2.mixes.len(), 32);
+        for i in 0..8 {
+            assert_eq!(v2.mixes[i].target_ch, 1);
+            assert_eq!(v2.mixes[i].source, 2);
+            assert_eq!(v2.mixes[i].weight_src, 0);
+            assert_eq!(v2.mixes[i].weight, 50);
+            assert_eq!(v2.mixes[i].offset, -10);
+            assert_eq!(v2.mixes[i].switch, 3);
+            assert_eq!(v2.mixes[i].mode, 1);
+        }
+        for i in 8..32 {
+            assert_eq!(v2.mixes[i], MixLine::disabled());
+        }
     }
 
     #[test]
@@ -1216,5 +1908,121 @@ mod tests {
         storage.radio.trainer_config = 99;
         storage.sanitize();
         assert_eq!(storage.radio.trainer_config, 0);
+    }
+
+    #[test]
+    fn test_crc16_and_slot_header() {
+        let test_payload = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
+        let crc = crc16(&test_payload);
+        assert_ne!(crc, 0);
+
+        let hdr = SlotHeader {
+            magic: SLOT_MAGIC,
+            version: SCHEMA_VERSION,
+            flags: 0,
+            len: test_payload.len() as u16,
+            crc16: crc,
+        };
+        let bytes = hdr.to_bytes();
+        let parsed = SlotHeader::parse(&bytes);
+        assert_eq!(parsed, hdr);
+        assert!(parsed.is_valid(test_payload.len()).is_ok());
+
+        // Corrupted length check
+        assert_eq!(
+            parsed.is_valid(test_payload.len() + 1),
+            Err(StorageError::LengthMismatch(test_payload.len() as u16))
+        );
+
+        // Invalid magic check
+        let mut corrupted_bytes = bytes;
+        corrupted_bytes[0] = 0xFF;
+        let corrupted_hdr = SlotHeader::parse(&corrupted_bytes);
+        assert_eq!(corrupted_hdr.is_valid(test_payload.len()), Err(StorageError::EmptySlot));
+    }
+
+    #[test]
+    fn test_eeprom_slot_addressing_and_bounds() {
+        assert_eq!(RADIO_SLOT_A_ADDR, 0x0000);
+        assert_eq!(RADIO_SLOT_B_ADDR, 0x0100);
+        assert_eq!(MODEL_BASE_ADDR, 0x0200);
+
+        // Verify model slot addresses are strictly 64-byte page-aligned
+        for i in 0..NUM_MODELS {
+            let addr = model_slot_addr(i).expect("Valid model slot");
+            assert_eq!(addr % (PAGE_SIZE as u16), 0);
+            assert!(addr >= MODEL_BASE_ADDR);
+            assert!((addr as usize + MODEL_SLOT_SIZE) <= EEPROM_TOTAL_SIZE);
+        }
+        assert_eq!(model_slot_addr(NUM_MODELS), None);
+    }
+
+    #[test]
+    fn test_dynamic_mixer_source_and_switch_availability() {
+        let mut storage = RadioStorage::default_factory();
+
+        // Stock config: ext_switches=0, ext_adc=0, j4_sg_sh_en=0
+        // Sticks (1..4), MAX (11), CH1..CH4 (12..15), Thr+ (30) always available
+        for s in 0..=4 {
+            assert!(storage.is_source_available(s));
+        }
+        assert!(storage.is_source_available(11));
+        assert!(storage.is_source_available(30));
+
+        // Pots VRA & VRB are available by default
+        assert!(storage.is_source_available(5));
+        assert!(storage.is_source_available(6));
+
+        // Switches SA..SD are available by default
+        assert!(storage.is_source_available(7)); // SA
+        assert!(storage.is_source_available(8)); // SB
+        assert!(storage.is_source_available(9)); // SC
+        assert!(storage.is_source_available(10)); // SD
+
+        // Extended switches SE..SH and SWI..SWJ unavailable by default
+        assert!(!storage.is_source_available(31)); // SE
+        assert!(!storage.is_source_available(32)); // SF
+        assert!(!storage.is_source_available(33)); // SG
+        assert!(!storage.is_source_available(34)); // SH
+        assert!(!storage.is_source_available(35)); // SWI
+        assert!(!storage.is_source_available(36)); // SWJ
+        assert!(!storage.is_source_available(37)); // VRC
+        assert!(!storage.is_source_available(38)); // VRD
+
+        // Enable ext_switches
+        storage.radio.ext_switches = 1;
+        assert!(storage.is_source_available(31)); // SE
+        assert!(storage.is_source_available(32)); // SF
+        assert!(storage.is_switch_cond_available(11)); // SE^
+        assert!(storage.is_switch_cond_available(14)); // SFv
+
+        // Enable SG/SH
+        storage.radio.j4_sg_sh_en = 1;
+        assert!(storage.is_source_available(33)); // SG
+        assert!(storage.is_source_available(34)); // SH
+        assert!(storage.is_switch_cond_available(15)); // SG^
+        assert!(storage.is_switch_cond_available(18)); // SHv
+
+        // Channels: default model has aux_channels [7, 8, 5, 6, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0]
+        // CH5..CH10 are configured (sources 16..21)
+        for ch in 1..=10 {
+            assert!(storage.is_channel_configured(ch));
+            assert!(storage.is_source_available(ch + 11));
+            assert!(storage.is_weight_src_available(ch)); // Bipolar
+            assert!(storage.is_weight_src_available(ch + 18)); // Unipolar
+        }
+        // CH11..CH18 are unmapped (source=0) and no mix line targets them
+        for ch in 11..=18 {
+            assert!(!storage.is_channel_configured(ch));
+            assert!(!storage.is_source_available(ch + 11));
+            assert!(!storage.is_weight_src_available(ch));
+            assert!(!storage.is_weight_src_available(ch + 18));
+        }
+
+        // Target CH11 with a mix line -> CH11 becomes configured
+        storage.active_model.mixes[0].target_ch = 11;
+        assert!(storage.is_channel_configured(11));
+        assert!(storage.is_source_available(22)); // CH11 source
+        assert!(storage.is_weight_src_available(11));
     }
 }
