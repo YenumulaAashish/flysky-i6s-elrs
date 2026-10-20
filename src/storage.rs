@@ -1,43 +1,28 @@
-//! I2C EEPROM storage (FT24C128A 16 KB) for non-volatile configuration and 20-model memory system.
+//! On-chip Flash storage for non-volatile configuration and 20-model memory system.
 //!
-//! Pinout on FS-i6X mainboard:
-//! - PB10: I2C2_SCL
-//! - PB11: I2C2_SDA
+//! Log-structured append-only storage (`sequential-storage`):
+//! - Pages 60..63: 0x0801_E000 .. 0x0802_0000 (8,192 bytes across 4 pages)
 //!
-//! Physical capacity: 16,384 bytes (256 pages x 64 bytes).
-//! Slot layout:
-//! - 0x0000..0x0100 (256 B / 4 pages): Primary Radio Config (Slot A)
-//! - 0x0100..0x0200 (256 B / 4 pages): Backup Radio Config (Slot B - A/B safe save)
-//! - 0x0200..0x3E00 (15,360 B / 240 pages): 20 Models x 768 B (12 pages each)
-//! - 0x3E00..0x4000 (512 B / 8 pages): Reserved / scratchpad
+//! Total capacity: 8,192 bytes.
+//! RadioConfig: 148 bytes.
+//! ModelConfig: 348 bytes. Active model cached in SRAM; 20 models stored on-demand.
+
+use embedded_storage_async::nor_flash::NorFlash;
+#[cfg(not(test))]
+use stm32f0xx_hal::pac;
 
 pub const FLASH_MAGIC: u32 = 0x4653_4B59; // "FSKY"
 pub const CONFIG_VERSION: u32 = 5;
 pub const NUM_MODELS: usize = 20;
 
-/// 8-byte framing envelope magic ("FX" in little-endian = 0x58, 0x46 -> 0x4658)
-pub const SLOT_MAGIC: u16 = 0x4658;
-pub const SCHEMA_VERSION: u8 = 1;
-pub const HEADER_SIZE: usize = 8;
+pub const FLASH_STORAGE_ADDR: usize = 0x0801_E000;
+pub const FLASH_STORAGE_END: usize = 0x0802_0000;
 
-pub const PAGE_SIZE: usize = 64;
-pub const EEPROM_TOTAL_SIZE: usize = 16_384;
+pub const KEY_RADIO: u8 = 0;
+pub const KEY_MODEL_BASE: u8 = 1;
 
-pub const RADIO_SLOT_A_ADDR: u16 = 0x0000;
-pub const RADIO_SLOT_B_ADDR: u16 = 0x0100;
-pub const RADIO_SLOT_SIZE: usize = 256;
-
-pub const MODEL_BASE_ADDR: u16 = 0x0200;
-pub const MODEL_SLOT_SIZE: usize = 768;
-
-#[inline(always)]
-pub const fn model_slot_addr(index: usize) -> Option<u16> {
-    if index >= NUM_MODELS {
-        None
-    } else {
-        Some(MODEL_BASE_ADDR + (index as u16) * (MODEL_SLOT_SIZE as u16))
-    }
-}
+const FLASH_KEY1: u32 = 0x4567_0123;
+const FLASH_KEY2: u32 = 0xCDEF_89AB;
 
 /// Calibration parameters for a single analog channel (8 bytes).
 #[repr(C)]
@@ -1043,350 +1028,290 @@ pub fn get_storage() -> &'static mut RadioStorage {
     unsafe { &mut GLOBAL_STORAGE }
 }
 
-pub const EEPROM_I2C_ADDR: u8 = 0x50;
+#[allow(dead_code)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum FlashError {
+    AddressMisaligned,
+    LengthMisaligned,
+    OutOfBounds,
+    ProgrammingError,
+    WriteProtectionError,
+    Timeout,
+    UnlockFailed,
+}
 
-/// Compute standard CRC-16 (IBM / Bisync / SDLC, poly 0x8005, init 0x0000, unreversed).
-pub fn crc16(data: &[u8]) -> u16 {
-    let mut crc = 0u16;
-    for &b in data {
-        crc ^= (b as u16) << 8;
-        for _ in 0..8 {
-            if (crc & 0x8000) != 0 {
-                crc = (crc << 1) ^ 0x8005;
-            } else {
-                crc <<= 1;
+impl core::fmt::Display for FlashError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl embedded_storage_async::nor_flash::NorFlashError for FlashError {
+    fn kind(&self) -> embedded_storage_async::nor_flash::NorFlashErrorKind {
+        match self {
+            FlashError::AddressMisaligned | FlashError::LengthMisaligned => {
+                embedded_storage_async::nor_flash::NorFlashErrorKind::NotAligned
             }
+            FlashError::OutOfBounds => {
+                embedded_storage_async::nor_flash::NorFlashErrorKind::OutOfBounds
+            }
+            _ => embedded_storage_async::nor_flash::NorFlashErrorKind::Other,
         }
     }
-    crc
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum StorageError {
-    I2cError,
-    EmptySlot,
-    VersionMismatch(u8),
-    LengthMismatch(u16),
-    CrcMismatch,
-    BufferTooSmall,
+#[derive(Clone, Copy)]
+pub struct Stm32Flash;
+
+impl embedded_storage_async::nor_flash::ErrorType for Stm32Flash {
+    type Error = FlashError;
 }
 
-/// 8-byte Slot Header:
-/// [0..2] magic: u16 (SLOT_MAGIC = 0x4658, "FX")
-/// [2]    version: u8 (SCHEMA_VERSION = 1)
-/// [3]    flags: u8 (0 = Valid active slot, 0xFF = Deleted)
-/// [4..6] len: u16 LE (exact payload byte length)
-/// [6..8] crc16: u16 LE (CRC-16 over payload)
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SlotHeader {
-    pub magic: u16,
-    pub version: u8,
-    pub flags: u8,
-    pub len: u16,
-    pub crc16: u16,
-}
+impl embedded_storage_async::nor_flash::ReadNorFlash for Stm32Flash {
+    const READ_SIZE: usize = 1;
 
-impl SlotHeader {
-    pub fn parse(buf: &[u8; HEADER_SIZE]) -> Self {
-        Self {
-            magic: u16::from_le_bytes([buf[0], buf[1]]),
-            version: buf[2],
-            flags: buf[3],
-            len: u16::from_le_bytes([buf[4], buf[5]]),
-            crc16: u16::from_le_bytes([buf[6], buf[7]]),
+    async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+        let capacity = self.capacity() as u32;
+        if offset as usize + bytes.len() > capacity as usize {
+            return Err(FlashError::OutOfBounds);
         }
-    }
-
-    pub fn to_bytes(&self) -> [u8; HEADER_SIZE] {
-        let mut out = [0u8; HEADER_SIZE];
-        out[0..2].copy_from_slice(&self.magic.to_le_bytes());
-        out[2] = self.version;
-        out[3] = self.flags;
-        out[4..6].copy_from_slice(&self.len.to_le_bytes());
-        out[6..8].copy_from_slice(&self.crc16.to_le_bytes());
-        out
-    }
-
-    pub fn is_valid(&self, expected_len: usize) -> Result<(), StorageError> {
-        if self.magic != SLOT_MAGIC {
-            return Err(StorageError::EmptySlot);
-        }
-        if self.version != SCHEMA_VERSION {
-            return Err(StorageError::VersionMismatch(self.version));
-        }
-        if self.flags != 0 {
-            return Err(StorageError::EmptySlot);
-        }
-        if self.len as usize != expected_len {
-            return Err(StorageError::LengthMismatch(self.len));
+        let src = offset as *const u8;
+        unsafe {
+            for (i, b) in bytes.iter_mut().enumerate() {
+                *b = core::ptr::read_volatile(src.add(i));
+            }
         }
         Ok(())
     }
+
+    fn capacity(&self) -> usize {
+        0x0802_0000
+    }
 }
 
-/// Direct hardware I2C2 EEPROM driver for FT24C128A (PB10 = SCL, PB11 = SDA).
-#[cfg(not(test))]
-pub struct EepromI2c;
+impl embedded_storage_async::nor_flash::NorFlash for Stm32Flash {
+    const WRITE_SIZE: usize = 2; // 16-bit halfword programming on STM32F0
+    const ERASE_SIZE: usize = 2048; // 2 KB page erase
 
-#[cfg(not(test))]
-impl EepromI2c {
-    /// Initialize I2C2 peripheral on PB10 (SCL) and PB11 (SDA) at ~1000 kHz Fast Mode Plus (Fm+).
-    pub fn init() {
-        let rcc = unsafe { &*stm32f0xx_hal::pac::RCC::ptr() };
-        let gpiob = unsafe { &*stm32f0xx_hal::pac::GPIOB::ptr() };
-        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
-        let syscfg = unsafe { &*stm32f0xx_hal::pac::SYSCFG::ptr() };
+    async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+        if !from.is_multiple_of(2048) || !to.is_multiple_of(2048) || from >= to {
+            return Err(FlashError::AddressMisaligned);
+        }
 
-        // 1. Enable GPIOB, SYSCFG, and I2C2 clocks
-        rcc.ahbenr.modify(|_, w| w.iopben().enabled());
-        rcc.apb2enr.modify(|_, w| w.syscfgen().enabled());
-        rcc.apb1enr.modify(|_, w| w.i2c2en().enabled());
-
-        // 2. Enable Fast Mode Plus (Fm+ 20 mA high-drive sink) on I2C2 pins in SYSCFG
-        syscfg.cfgr1.modify(|_, w| w.i2c2_fmp().fmp());
-
-        // 3. Configure PB10 and PB11 as Alternate Function 1 (I2C2), Open-Drain, High-Speed, Pull-up
-        gpiob.afrh.modify(|_, w| w.afrh10().af1().afrh11().af1());
-        gpiob.moder.modify(|_, w| w.moder10().alternate().moder11().alternate());
-        gpiob.otyper.modify(|_, w| w.ot10().open_drain().ot11().open_drain());
-        gpiob.ospeedr.modify(|_, w| w.ospeedr10().high_speed().ospeedr11().high_speed());
-        gpiob.pupdr.modify(|_, w| w.pupdr10().pull_up().pupdr11().pull_up());
-
-        // 4. Disable I2C2 while configuring timing
-        i2c2.cr1.modify(|_, w| w.pe().disabled());
-
-        // Timing for 48 MHz APB1/SYSCLK -> 1 MHz (1000 kHz) Fast Mode Plus (Fm+)
-        // PRESC=0, SCLDEL=3 (~80ns), SDADEL=0, SCLH=9 (~250ns), SCLL=25 (~650ns)
-        // Total I2C cycle = (1 + 9 + 1 + 25) * 20.83ns = 750ns nominal bus + rise/fall -> 1.0 MHz
-        i2c2.timingr.write(|w| {
-            w.presc().bits(0)
-                .scldel().bits(3)
-                .sdadel().bits(0)
-                .sclh().bits(9)
-                .scll().bits(25)
-        });
-
-        // 5. Enable I2C2 peripheral
-        i2c2.cr1.modify(|_, w| w.pe().enabled());
-    }
-
-    /// Read sequential bytes starting at 16-bit EEPROM `addr`.
-    pub fn read(addr: u16, data: &mut [u8]) -> Result<(), StorageError> {
-        if data.is_empty() {
+        #[cfg(test)]
+        {
+            let _ = (from, to);
             return Ok(());
         }
 
-        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
+        #[cfg(not(test))]
+        cortex_m::interrupt::free(|_| unsafe {
+            let flash = &*pac::FLASH::ptr();
 
-        // 1. Send 2-byte memory address write header without STOP (autoend=false)
-        let addr_bytes = addr.to_be_bytes();
-        i2c2.cr2.write(|w| {
-            w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
-                .nbytes().bits(2)
-                .rd_wrn().write()
-                .autoend().software()
-                .start().start()
-        });
+            if flash.cr.read().lock().bit_is_set() {
+                flash.keyr.write(|w| w.bits(FLASH_KEY1));
+                flash.keyr.write(|w| w.bits(FLASH_KEY2));
+            }
+            if flash.cr.read().lock().bit_is_set() {
+                return Err(FlashError::UnlockFailed);
+            }
 
-        for &byte in &addr_bytes {
-            let mut timeout = 100_000u32;
-            while i2c2.isr.read().txis().bit_is_clear() {
-                if i2c2.isr.read().nackf().bit_is_set() {
-                    i2c2.icr.write(|w| w.nackcf().clear());
-                    return Err(StorageError::I2cError);
+            let mut page_addr = from;
+            while page_addr < to {
+                crate::watchdog::feed();
+
+                let mut timeout = 1_000_000u32;
+                while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
+                    timeout -= 1;
                 }
-                timeout -= 1;
                 if timeout == 0 {
-                    return Err(StorageError::I2cError);
+                    return Err(FlashError::Timeout);
                 }
-            }
-            i2c2.txdr.write(|w| w.txdata().bits(byte));
-        }
 
-        // Wait for TC (Transfer Complete)
-        let mut timeout = 100_000u32;
-        while i2c2.isr.read().tc().bit_is_clear() {
-            timeout -= 1;
-            if timeout == 0 {
-                return Err(StorageError::I2cError);
-            }
-        }
+                flash
+                    .sr
+                    .write(|w| w.eop().event().wrprt().error().pgerr().error());
 
-        // 2. Read sequential data bytes in chunks of up to 255 bytes (NBYTES limitation)
-        let mut read_offset = 0;
-        while read_offset < data.len() {
-            let chunk_len = core::cmp::min(255, data.len() - read_offset);
-            let is_last = (read_offset + chunk_len) == data.len();
+                flash.cr.write_with_zero(|w| w.per().page_erase());
+                flash.ar.write_with_zero(|w| w.far().bits(page_addr));
+                flash
+                    .cr
+                    .write_with_zero(|w| w.per().page_erase().strt().start());
 
-            i2c2.cr2.write(|w| {
-                w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
-                    .nbytes().bits(chunk_len as u8)
-                    .rd_wrn().read()
-                    .autoend().bit(is_last)
-                    .start().start()
-            });
-
-            for i in 0..chunk_len {
-                let mut byte_timeout = 100_000u32;
-                while i2c2.isr.read().rxne().bit_is_clear() {
-                    byte_timeout -= 1;
-                    if byte_timeout == 0 {
-                        return Err(StorageError::I2cError);
-                    }
+                timeout = 1_000_000;
+                while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
+                    timeout -= 1;
                 }
-                data[read_offset + i] = i2c2.rxdr.read().rxdata().bits();
-            }
-
-            if !is_last {
-                let mut tc_timeout = 100_000u32;
-                while i2c2.isr.read().tc().bit_is_clear() {
-                    tc_timeout -= 1;
-                    if tc_timeout == 0 {
-                        return Err(StorageError::I2cError);
-                    }
-                }
-            } else {
-                let mut stop_timeout = 100_000u32;
-                while i2c2.isr.read().stopf().bit_is_clear() {
-                    stop_timeout -= 1;
-                    if stop_timeout == 0 {
-                        break;
-                    }
-                }
-                i2c2.icr.write(|w| w.stopcf().clear());
-            }
-
-            read_offset += chunk_len;
-        }
-
-        Ok(())
-    }
-
-    /// Write a single page chunk (up to 64 bytes) that does NOT cross a 64-byte boundary.
-    fn write_page_aligned(addr: u16, chunk: &[u8]) -> Result<(), StorageError> {
-        if chunk.is_empty() {
-            return Ok(());
-        }
-
-        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
-        let total_bytes = (2 + chunk.len()) as u8;
-        let addr_bytes = addr.to_be_bytes();
-
-        i2c2.cr2.write(|w| {
-            w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
-                .nbytes().bits(total_bytes)
-                .rd_wrn().write()
-                .autoend().automatic()
-                .start().start()
-        });
-
-        // 1. Send 2 address bytes
-        for &byte in &addr_bytes {
-            let mut timeout = 100_000u32;
-            while i2c2.isr.read().txis().bit_is_clear() {
-                if i2c2.isr.read().nackf().bit_is_set() {
-                    i2c2.icr.write(|w| w.nackcf().clear());
-                    return Err(StorageError::I2cError);
-                }
-                timeout -= 1;
                 if timeout == 0 {
-                    return Err(StorageError::I2cError);
+                    return Err(FlashError::Timeout);
                 }
-            }
-            i2c2.txdr.write(|w| w.txdata().bits(byte));
-        }
 
-        // 2. Send payload bytes
-        for &byte in chunk {
-            let mut timeout = 100_000u32;
-            while i2c2.isr.read().txis().bit_is_clear() {
-                if i2c2.isr.read().nackf().bit_is_set() {
-                    i2c2.icr.write(|w| w.nackcf().clear());
-                    return Err(StorageError::I2cError);
+                if flash.sr.read().wrprt().is_error() {
+                    flash.sr.write(|w| w.wrprt().error());
+                    return Err(FlashError::WriteProtectionError);
                 }
-                timeout -= 1;
-                if timeout == 0 {
-                    return Err(StorageError::I2cError);
-                }
+                flash.sr.write(|w| w.eop().event());
+
+                page_addr += 2048;
             }
-            i2c2.txdr.write(|w| w.txdata().bits(byte));
-        }
 
-        // Wait for STOPF
-        let mut stop_timeout = 100_000u32;
-        while i2c2.isr.read().stopf().bit_is_clear() {
-            stop_timeout -= 1;
-            if stop_timeout == 0 {
-                break;
-            }
-        }
-        i2c2.icr.write(|w| w.stopcf().clear());
-
-        // 3. ACK Polling for EEPROM internal write cycle (max 5ms)
-        Self::poll_ack();
-
-        Ok(())
-    }
-
-    /// Poll I2C address until EEPROM ACKs that its internal self-timed write cycle has completed.
-    fn poll_ack() {
-        let i2c2 = unsafe { &*stm32f0xx_hal::pac::I2C2::ptr() };
-        let mut retries = 50u32; // up to ~10ms total polling
-
-        while retries > 0 {
+            flash.cr.write_with_zero(|w| w.bits(0));
+            flash.cr.write(|w| w.lock().locked());
             crate::watchdog::feed();
-            retries -= 1;
 
-            // Send 0-byte write to test device readiness
-            i2c2.cr2.write(|w| {
-                w.sadd().bits((EEPROM_I2C_ADDR << 1) as u16)
-                    .nbytes().bits(0)
-                    .rd_wrn().write()
-                    .autoend().automatic()
-                    .start().start()
-            });
+            Ok(())
+        })
+    }
 
-            let mut wait = 20_000u32;
-            let mut got_nack = false;
-            while i2c2.isr.read().stopf().bit_is_clear() && wait > 0 {
-                if i2c2.isr.read().nackf().bit_is_set() {
-                    got_nack = true;
-                    i2c2.icr.write(|w| w.nackcf().clear());
+    async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+        if !offset.is_multiple_of(2) {
+            return Err(FlashError::AddressMisaligned);
+        }
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        #[cfg(test)]
+        {
+            let _ = (offset, bytes);
+            return Ok(());
+        }
+
+        #[cfg(not(test))]
+        cortex_m::interrupt::free(|_| unsafe {
+            let flash = &*pac::FLASH::ptr();
+
+            if flash.cr.read().lock().bit_is_set() {
+                flash.keyr.write(|w| w.bits(FLASH_KEY1));
+                flash.keyr.write(|w| w.bits(FLASH_KEY2));
+            }
+            if flash.cr.read().lock().bit_is_set() {
+                return Err(FlashError::UnlockFailed);
+            }
+
+            let mut timeout = 1_000_000u32;
+            while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
+                timeout -= 1;
+            }
+            if timeout == 0 {
+                return Err(FlashError::Timeout);
+            }
+
+            flash
+                .sr
+                .write(|w| w.eop().event().wrprt().error().pgerr().error());
+            flash.cr.write_with_zero(|w| w.pg().program());
+
+            let halfwords = bytes.len() / 2;
+            let src = bytes.as_ptr() as *const u16;
+            let dst = offset as *mut u16;
+
+            for i in 0..halfwords {
+                let hw = core::ptr::read_unaligned(src.add(i));
+                core::ptr::write_volatile(dst.add(i), hw);
+
+                timeout = 100_000;
+                while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
+                    timeout -= 1;
                 }
-                wait -= 1;
-            }
-            i2c2.icr.write(|w| w.stopcf().clear());
+                if timeout == 0 {
+                    flash.cr.write_with_zero(|w| w.bits(0));
+                    flash.cr.write(|w| w.lock().locked());
+                    return Err(FlashError::Timeout);
+                }
 
-            if !got_nack && wait > 0 {
-                return; // Device ACKed, write complete!
-            }
+                let sr = flash.sr.read();
+                if sr.pgerr().is_error() {
+                    flash.sr.write(|w| w.pgerr().error());
+                    flash.cr.write_with_zero(|w| w.bits(0));
+                    flash.cr.write(|w| w.lock().locked());
+                    return Err(FlashError::ProgrammingError);
+                }
+                if sr.wrprt().is_error() {
+                    flash.sr.write(|w| w.wrprt().error());
+                    flash.cr.write_with_zero(|w| w.bits(0));
+                    flash.cr.write(|w| w.lock().locked());
+                    return Err(FlashError::WriteProtectionError);
+                }
+                flash.sr.write(|w| w.eop().event());
 
-            {
-                let start = crate::time::millis();
-                while crate::time::millis().wrapping_sub(start) < 1 {
+                if (i & 0x7F) == 0 {
                     crate::watchdog::feed();
                 }
             }
-        }
-    }
 
-    /// Write arbitrary slice with automatic 64-byte page boundary splitting to prevent wrap-around.
-    pub fn write(mut addr: u16, data: &[u8]) -> Result<(), StorageError> {
-        let mut written = 0;
-        while written < data.len() {
-            let page_offset = (addr % (PAGE_SIZE as u16)) as usize;
-            let chunk_len = core::cmp::min(PAGE_SIZE - page_offset, data.len() - written);
+            if bytes.len() % 2 != 0 {
+                let last_byte = bytes[bytes.len() - 1];
+                let hw = (last_byte as u16) | 0xFF00;
+                core::ptr::write_volatile(dst.add(halfwords), hw);
 
-            let chunk = &data[written..written + chunk_len];
-            Self::write_page_aligned(addr, chunk)?;
+                timeout = 100_000;
+                while flash.sr.read().bsy().bit_is_set() && timeout > 0 {
+                    timeout -= 1;
+                }
+                if timeout == 0 {
+                    flash.cr.write_with_zero(|w| w.bits(0));
+                    flash.cr.write(|w| w.lock().locked());
+                    return Err(FlashError::Timeout);
+                }
 
-            addr = addr.saturating_add(chunk_len as u16);
-            written += chunk_len;
-        }
-        Ok(())
+                let sr = flash.sr.read();
+                if sr.pgerr().is_error() {
+                    flash.sr.write(|w| w.pgerr().error());
+                    flash.cr.write_with_zero(|w| w.bits(0));
+                    flash.cr.write(|w| w.lock().locked());
+                    return Err(FlashError::ProgrammingError);
+                }
+                if sr.wrprt().is_error() {
+                    flash.sr.write(|w| w.wrprt().error());
+                    flash.cr.write_with_zero(|w| w.bits(0));
+                    flash.cr.write(|w| w.lock().locked());
+                    return Err(FlashError::WriteProtectionError);
+                }
+                flash.sr.write(|w| w.eop().event());
+            }
+
+            flash.cr.write_with_zero(|w| w.bits(0));
+            flash.cr.write(|w| w.lock().locked());
+            crate::watchdog::feed();
+
+            Ok(())
+        })
     }
 }
 
+impl embedded_storage_async::nor_flash::MultiwriteNorFlash for Stm32Flash {}
+
+fn block_on<F: core::future::Future>(mut future: F) -> F::Output {
+    use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    fn noop_clone(_: *const ()) -> RawWaker {
+        RawWaker::new(core::ptr::null(), &NOOP_VTABLE)
+    }
+    fn noop(_: *const ()) {}
+
+    static NOOP_VTABLE: RawWakerVTable = RawWakerVTable::new(noop_clone, noop, noop, noop);
+
+    let raw_waker = RawWaker::new(core::ptr::null(), &NOOP_VTABLE);
+    let waker = unsafe { Waker::from_raw(raw_waker) };
+    let mut cx = Context::from_waker(&waker);
+
+    let mut pinned = unsafe { core::pin::Pin::new_unchecked(&mut future) };
+    loop {
+        match pinned.as_mut().poll(&mut cx) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => {
+                #[cfg(not(test))]
+                crate::watchdog::feed();
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn storage_config() -> sequential_storage::map::MapConfig<Stm32Flash> {
+    sequential_storage::map::MapConfig::new(FLASH_STORAGE_ADDR as u32..FLASH_STORAGE_END as u32)
+}
 /// Legacy ModelConfig v1 (128 bytes) from prior releases.
 /// Used for transparent, lossless migration to v2 (348 bytes).
 #[repr(C)]
@@ -1491,158 +1416,106 @@ pub fn unpack_legacy_v1_model(v1: &LegacyModelConfigV1) -> ModelConfig {
     v2
 }
 
-/// Helper to read a raw C struct from an EEPROM slot with 8-byte framing and CRC16 verification.
-pub fn load_slot<T: Copy>(addr: u16, dst: &mut T) -> Result<(), StorageError> {
-    #[cfg(test)]
-    {
-        let _ = addr;
-        let _ = dst;
-        return Err(StorageError::EmptySlot);
+impl<'a> sequential_storage::map::Value<'a> for RadioConfig {
+    fn serialize_into(
+        &self,
+        buffer: &mut [u8],
+    ) -> Result<usize, sequential_storage::map::SerializationError> {
+        let size = core::mem::size_of::<Self>();
+        if buffer.len() < size {
+            return Err(sequential_storage::map::SerializationError::BufferTooSmall);
+        }
+        let src = self as *const Self as *const u8;
+        unsafe {
+            core::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), size);
+        }
+        Ok(size)
     }
 
-    #[cfg(not(test))]
-    {
-        // 1. Read 8-byte slot header
-        let mut hdr_bytes = [0u8; HEADER_SIZE];
-        EepromI2c::read(addr, &mut hdr_bytes)?;
-        let hdr = SlotHeader::parse(&hdr_bytes);
-
-        let expected_size = core::mem::size_of::<T>();
-
-        // Check if this is a ModelConfig request and the slot holds legacy v1 (128 bytes)
-        if expected_size == core::mem::size_of::<ModelConfig>() && hdr.len == 128 && hdr.magic == SLOT_MAGIC && hdr.flags == 0 {
-            // Read 128 bytes of legacy model
-            let mut v1 = core::mem::MaybeUninit::<LegacyModelConfigV1>::uninit();
-            let v1_bytes = unsafe {
-                core::slice::from_raw_parts_mut(v1.as_mut_ptr() as *mut u8, 128)
-            };
-            EepromI2c::read(addr + HEADER_SIZE as u16, v1_bytes)?;
-
-            // Verify CRC-16 of legacy payload
-            let computed_crc = crc16(v1_bytes);
-            if computed_crc != hdr.crc16 {
-                return Err(StorageError::CrcMismatch);
-            }
-
-            let legacy_model = unsafe { v1.assume_init() };
-            let v2_model = unpack_legacy_v1_model(&legacy_model);
+    fn deserialize_from(
+        buffer: &'a [u8],
+    ) -> Result<(Self, usize), sequential_storage::map::SerializationError> {
+        let size = core::mem::size_of::<Self>();
+        if buffer.len() >= size {
+            let mut val = Self::default_factory();
+            let dst = &mut val as *mut Self as *mut u8;
             unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &v2_model as *const ModelConfig as *const T,
-                    dst as *mut T,
-                    1,
-                );
+                core::ptr::copy_nonoverlapping(buffer.as_ptr(), dst, size);
             }
-
-            // In-place upgrade: re-save slot as v2 (348 bytes) with updated CRC-16 envelope
-            let _ = save_slot(addr, &v2_model);
-
-            return Ok(());
+            Ok((val, size))
+        } else if buffer.len() >= 140 {
+            // Backward-compatible loading from v0.2.0 (140 bytes)
+            let mut val = Self::default_factory();
+            let dst = &mut val as *mut Self as *mut u8;
+            unsafe {
+                core::ptr::copy_nonoverlapping(buffer.as_ptr(), dst, 140);
+            }
+            Ok((val, 140))
+        } else {
+            Err(sequential_storage::map::SerializationError::BufferTooSmall)
         }
-
-        hdr.is_valid(expected_size)?;
-
-        // 2. Read payload directly into destination struct
-        let dst_bytes = unsafe {
-            core::slice::from_raw_parts_mut(dst as *mut T as *mut u8, expected_size)
-        };
-        EepromI2c::read(addr + HEADER_SIZE as u16, dst_bytes)?;
-
-        // 3. Verify CRC-16
-        let computed_crc = crc16(dst_bytes);
-        if computed_crc != hdr.crc16 {
-            return Err(StorageError::CrcMismatch);
-        }
-
-        Ok(())
     }
 }
 
-/// Helper to write a raw C struct into an EEPROM slot with 8-byte framing and CRC16.
-pub fn save_slot<T: Copy>(addr: u16, src: &T) -> Result<(), StorageError> {
-    #[cfg(test)]
-    {
-        let _ = addr;
-        let _ = src;
-        return Ok(());
+impl<'a> sequential_storage::map::Value<'a> for ModelConfig {
+    fn serialize_into(
+        &self,
+        buffer: &mut [u8],
+    ) -> Result<usize, sequential_storage::map::SerializationError> {
+        let size = core::mem::size_of::<Self>();
+        if buffer.len() < size {
+            return Err(sequential_storage::map::SerializationError::BufferTooSmall);
+        }
+        let src = self as *const Self as *const u8;
+        unsafe {
+            core::ptr::copy_nonoverlapping(src, buffer.as_mut_ptr(), size);
+        }
+        Ok(size)
     }
 
-    #[cfg(not(test))]
-    {
-        let size = core::mem::size_of::<T>();
-        let src_bytes = unsafe {
-            core::slice::from_raw_parts(src as *const T as *const u8, size)
-        };
-
-        let crc = crc16(src_bytes);
-        let hdr = SlotHeader {
-            magic: SLOT_MAGIC,
-            version: SCHEMA_VERSION,
-            flags: 0,
-            len: size as u16,
-            crc16: crc,
-        };
-
-        // Write header first
-        let hdr_bytes = hdr.to_bytes();
-        EepromI2c::write(addr, &hdr_bytes)?;
-
-        // Write struct payload
-        EepromI2c::write(addr + HEADER_SIZE as u16, src_bytes)?;
-
-        Ok(())
+    fn deserialize_from(
+        buffer: &'a [u8],
+    ) -> Result<(Self, usize), sequential_storage::map::SerializationError> {
+        let size = core::mem::size_of::<Self>();
+        if buffer.len() >= size {
+            let mut val = Self::default_for_index(0);
+            let dst = &mut val as *mut Self as *mut u8;
+            unsafe {
+                core::ptr::copy_nonoverlapping(buffer.as_ptr(), dst, size);
+            }
+            Ok((val, size))
+        } else if buffer.len() >= 128 {
+            // Backward-compatible loading from v0.2.0 (128 bytes)
+            let mut v1 = core::mem::MaybeUninit::<LegacyModelConfigV1>::uninit();
+            unsafe {
+                core::ptr::copy_nonoverlapping(buffer.as_ptr(), v1.as_mut_ptr() as *mut u8, 128);
+                let legacy = v1.assume_init();
+                let v2 = unpack_legacy_v1_model(&legacy);
+                Ok((v2, 128))
+            }
+        } else {
+            Err(sequential_storage::map::SerializationError::BufferTooSmall)
+        }
     }
 }
 
-/// Read only model name and magic without transferring the entire ModelConfig.
-pub fn peek_model_name(slot_idx: usize) -> Option<[u8; 10]> {
-    #[cfg(test)]
-    {
-        let _ = slot_idx;
-        None
-    }
-    #[cfg(not(test))]
-    {
-        let addr = model_slot_addr(slot_idx)?;
-        // Read 8-byte header + first 10 bytes (ModelConfig::name) = 18 bytes
-        let mut buf = [0u8; HEADER_SIZE + 10];
-        if EepromI2c::read(addr, &mut buf).is_err() {
-            return None;
-        }
+fn format_and_save_all(storage: &RadioStorage) {
+    let mut flash = Stm32Flash;
+    let _ = block_on(flash.erase(FLASH_STORAGE_ADDR as u32, FLASH_STORAGE_END as u32));
 
-        let hdr = SlotHeader::parse(unsafe { &*(buf[0..HEADER_SIZE].as_ptr() as *const [u8; HEADER_SIZE]) });
-        if hdr.magic != SLOT_MAGIC || hdr.flags != 0 {
-            return None;
-        }
-        if hdr.len != (core::mem::size_of::<ModelConfig>() as u16) && hdr.len != 128 {
-            return None;
-        }
-
-        let mut name = [0u8; 10];
-        name.copy_from_slice(&buf[HEADER_SIZE..HEADER_SIZE + 10]);
-        Some(name)
-    }
+    let mut map = sequential_storage::map::MapStorage::new(
+        flash,
+        storage_config(),
+        sequential_storage::cache::Cache::new_uncached(),
+    );
+    let mut buf = [0u8; 512];
+    let _ = block_on(map.store_item(&mut buf, &KEY_RADIO, &storage.radio));
+    let active_idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
+    let key = KEY_MODEL_BASE + active_idx as u8;
+    let _ = block_on(map.store_item(&mut buf, &key, &storage.active_model));
 }
 
-/// Delete a model slot in O(1) by invalidating the magic bytes in the 8-byte header.
-pub fn delete_model_slot(slot_idx: usize) -> bool {
-    #[cfg(test)]
-    {
-        let _ = slot_idx;
-        true
-    }
-    #[cfg(not(test))]
-    {
-        let Some(addr) = model_slot_addr(slot_idx) else {
-            return false;
-        };
-        // Overwrite magic with 0xFFFF to invalidate slot
-        let invalid_magic = [0xFFu8, 0xFFu8];
-        EepromI2c::write(addr, &invalid_magic).is_ok()
-    }
-}
-
-/// Initialize EEPROM peripheral and load radio storage into memory.
+/// Initialize Flash storage and load radio configuration and active model into memory.
 #[inline(never)]
 pub fn load_storage_into(storage: &mut RadioStorage) {
     #[cfg(test)]
@@ -1653,65 +1526,87 @@ pub fn load_storage_into(storage: &mut RadioStorage) {
 
     #[cfg(not(test))]
     {
-        EepromI2c::init();
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 512];
 
-        // 1. Try loading RadioConfig from Primary Slot A
-        let mut radio_loaded = false;
-        if load_slot(RADIO_SLOT_A_ADDR, &mut storage.radio).is_ok() {
-            radio_loaded = true;
-        } else if load_slot(RADIO_SLOT_B_ADDR, &mut storage.radio).is_ok() {
-            // Primary Slot A failed, but Backup Slot B succeeded!
-            radio_loaded = true;
-            // Restore Slot A from Slot B
-            let _ = save_slot(RADIO_SLOT_A_ADDR, &storage.radio);
-        }
-
-        if !radio_loaded {
-            // Fresh / uninitialized EEPROM -> load factory defaults and save to Slot A and B
-            storage.init_default();
-            let _ = save_slot(RADIO_SLOT_A_ADDR, &storage.radio);
-            let _ = save_slot(RADIO_SLOT_B_ADDR, &storage.radio);
-            if let Some(addr) = model_slot_addr(0) {
-                let _ = save_slot(addr, &storage.active_model);
+        let radio_res: Result<Option<RadioConfig>, _> =
+            block_on(map.fetch_item(&mut buf, &KEY_RADIO));
+        if let Ok(Some(cfg)) = radio_res {
+            if cfg.magic == FLASH_MAGIC && cfg.version == CONFIG_VERSION {
+                storage.radio = cfg;
+                let active_idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
+                let key = KEY_MODEL_BASE + active_idx as u8;
+                if let Ok(Some(m)) = block_on(map.fetch_item(&mut buf, &key)) {
+                    storage.active_model = m;
+                } else {
+                    storage.active_model = ModelConfig::default_for_index(active_idx);
+                }
+                storage.sanitize();
+                return;
             }
-            storage.sanitize();
-            return;
         }
 
-        // 2. Load only the active model into the active-model SRAM cache
-        let active_idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
-        if let Some(addr) = model_slot_addr(active_idx) {
-            if load_slot(addr, &mut storage.active_model).is_err() {
-                storage.active_model = ModelConfig::default_for_index(active_idx);
-            }
-        } else {
-            storage.active_model = ModelConfig::default_for_index(0);
-        }
-
-        storage.sanitize();
+        // Clean factory default initialization
+        storage.init_default();
+        format_and_save_all(storage);
     }
 }
 
-/// Load a specific model slot into `storage.active_model`.
+/// Load a specific model slot into .
 pub fn load_active_model(storage: &mut RadioStorage) -> bool {
     let active_idx = (storage.radio.active_model as usize).min(NUM_MODELS - 1);
-    if let Some(addr) = model_slot_addr(active_idx) {
-        if load_slot(addr, &mut storage.active_model).is_ok() {
+    #[cfg(test)]
+    {
+        storage.active_model = ModelConfig::default_for_index(active_idx);
+        storage.sanitize();
+        return true;
+    }
+    #[cfg(not(test))]
+    {
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 512];
+        let key = KEY_MODEL_BASE + active_idx as u8;
+        if let Ok(Some(model)) = block_on(map.fetch_item::<ModelConfig>(&mut buf, &key)) {
+            storage.active_model = model;
             storage.sanitize();
-            return true;
+            true
+        } else {
+            storage.active_model = ModelConfig::default_for_index(active_idx);
+            storage.sanitize();
+            false
         }
     }
-    storage.active_model = ModelConfig::default_for_index(active_idx);
-    storage.sanitize();
-    false
 }
 
 /// Save arbitrary ModelConfig to an arbitrary model slot index.
 pub fn save_model_to_slot(slot_idx: usize, model: &ModelConfig) -> bool {
-    if let Some(addr) = model_slot_addr(slot_idx) {
-        save_slot(addr, model).is_ok()
-    } else {
-        false
+    #[cfg(test)]
+    {
+        let _ = slot_idx;
+        let _ = model;
+        return true;
+    }
+    #[cfg(not(test))]
+    {
+        if slot_idx >= NUM_MODELS {
+            return false;
+        }
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 512];
+        let key = KEY_MODEL_BASE + slot_idx as u8;
+        block_on(map.store_item(&mut buf, &key, model)).is_ok()
     }
 }
 
@@ -1722,7 +1617,7 @@ pub fn load_storage() -> RadioStorage {
     storage
 }
 
-/// Save the currently active model to its dedicated EEPROM slot.
+/// Save the currently active model to its dedicated slot in Flash.
 pub fn save_active_model(storage: &RadioStorage) -> bool {
     #[cfg(test)]
     {
@@ -1736,7 +1631,7 @@ pub fn save_active_model(storage: &RadioStorage) -> bool {
     }
 }
 
-/// Save RadioConfig using A/B ping-pong save to ensure power-loss safety.
+/// Save RadioConfig to Flash storage.
 pub fn save_radio_config(storage: &RadioStorage) -> bool {
     #[cfg(test)]
     {
@@ -1745,10 +1640,13 @@ pub fn save_radio_config(storage: &RadioStorage) -> bool {
     }
     #[cfg(not(test))]
     {
-        // Save to Backup Slot B first, then to Primary Slot A
-        let ok_b = save_slot(RADIO_SLOT_B_ADDR, &storage.radio).is_ok();
-        let ok_a = save_slot(RADIO_SLOT_A_ADDR, &storage.radio).is_ok();
-        ok_a || ok_b
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 512];
+        block_on(map.store_item(&mut buf, &KEY_RADIO, &storage.radio)).is_ok()
     }
 }
 
@@ -1762,6 +1660,56 @@ pub fn load_config() -> RadioConfig {
     let storage = get_storage();
     load_storage_into(storage);
     storage.radio
+}
+
+/// Read only model name without transferring or deserializing unneeded fields.
+pub fn peek_model_name(slot_idx: usize) -> Option<[u8; 10]> {
+    #[cfg(test)]
+    {
+        let _ = slot_idx;
+        None
+    }
+    #[cfg(not(test))]
+    {
+        if slot_idx >= NUM_MODELS {
+            return None;
+        }
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 512];
+        let key = KEY_MODEL_BASE + slot_idx as u8;
+        if let Ok(Some(model)) = block_on(map.fetch_item::<ModelConfig>(&mut buf, &key)) {
+            Some(model.name)
+        } else {
+            None
+        }
+    }
+}
+
+/// Delete a model slot in Flash by removing the key from the sequential-storage map.
+pub fn delete_model_slot(slot_idx: usize) -> bool {
+    #[cfg(test)]
+    {
+        let _ = slot_idx;
+        true
+    }
+    #[cfg(not(test))]
+    {
+        if slot_idx >= NUM_MODELS {
+            return false;
+        }
+        let mut map = sequential_storage::map::MapStorage::new(
+            Stm32Flash,
+            storage_config(),
+            sequential_storage::cache::Cache::new_uncached(),
+        );
+        let mut buf = [0u8; 512];
+        let key = KEY_MODEL_BASE + slot_idx as u8;
+        block_on(map.remove_item(&mut buf, &key)).is_ok()
+    }
 }
 
 /// Read persisted receiver ID from active model if previously bound.
@@ -1945,52 +1893,100 @@ mod tests {
     }
 
     #[test]
-    fn test_crc16_and_slot_header() {
-        let test_payload = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
-        let crc = crc16(&test_payload);
-        assert_ne!(crc, 0);
+    fn test_value_serialization_roundtrip_radio_config() {
+        use sequential_storage::map::Value;
+        let mut radio = RadioConfig::default_factory();
+        radio.vbat_warn_deci = 48;
+        radio.backlight_brightness = 7;
+        radio.adc_modes[10] = 2; // PC5 TwoPos
 
-        let hdr = SlotHeader {
-            magic: SLOT_MAGIC,
-            version: SCHEMA_VERSION,
-            flags: 0,
-            len: test_payload.len() as u16,
-            crc16: crc,
-        };
-        let bytes = hdr.to_bytes();
-        let parsed = SlotHeader::parse(&bytes);
-        assert_eq!(parsed, hdr);
-        assert!(parsed.is_valid(test_payload.len()).is_ok());
+        let mut buf = [0u8; 512];
+        let len = radio.serialize_into(&mut buf).expect("Serialize success");
+        assert_eq!(len, core::mem::size_of::<RadioConfig>());
 
-        // Corrupted length check
-        assert_eq!(
-            parsed.is_valid(test_payload.len() + 1),
-            Err(StorageError::LengthMismatch(test_payload.len() as u16))
-        );
-
-        // Invalid magic check
-        let mut corrupted_bytes = bytes;
-        corrupted_bytes[0] = 0xFF;
-        let corrupted_hdr = SlotHeader::parse(&corrupted_bytes);
-        assert_eq!(corrupted_hdr.is_valid(test_payload.len()), Err(StorageError::EmptySlot));
+        let (deserialized, dlen): (RadioConfig, usize) =
+            RadioConfig::deserialize_from(&buf[..len]).expect("Deserialize success");
+        assert_eq!(dlen, len);
+        assert_eq!(deserialized, radio);
     }
 
     #[test]
-    fn test_eeprom_slot_addressing_and_bounds() {
-        assert_eq!(RADIO_SLOT_A_ADDR, 0x0000);
-        assert_eq!(RADIO_SLOT_B_ADDR, 0x0100);
-        assert_eq!(MODEL_BASE_ADDR, 0x0200);
+    fn test_value_serialization_roundtrip_model_config() {
+        use sequential_storage::map::Value;
+        let mut model = ModelConfig::default_for_index(3);
+        model.name = *b"TEST 04   ";
+        model.failsafe_thr = 1150;
+        model.mixes[0].target_ch = 5;
+        model.mixes[0].source = 2;
+        model.mixes[0].weight = 75;
 
-        // Verify model slot addresses are strictly 64-byte page-aligned
-        for i in 0..NUM_MODELS {
-            let addr = model_slot_addr(i).expect("Valid model slot");
-            assert_eq!(addr % (PAGE_SIZE as u16), 0);
-            assert!(addr >= MODEL_BASE_ADDR);
-            assert!((addr as usize + MODEL_SLOT_SIZE) <= EEPROM_TOTAL_SIZE);
-        }
-        assert_eq!(model_slot_addr(NUM_MODELS), None);
+        let mut buf = [0u8; 512];
+        let len = model.serialize_into(&mut buf).expect("Serialize success");
+        assert_eq!(len, core::mem::size_of::<ModelConfig>());
+
+        let (deserialized, dlen): (ModelConfig, usize) =
+            ModelConfig::deserialize_from(&buf[..len]).expect("Deserialize success");
+        assert_eq!(dlen, len);
+        assert_eq!(deserialized, model);
     }
 
+    #[test]
+    fn test_value_serialization_legacy_migration() {
+        use sequential_storage::map::Value;
+        let legacy = LegacyModelConfigV1 {
+            name: *b"LEGACY 01 ",
+            model_type: 2,
+            _pad0: 0,
+            rx_id: 0xDEAD_BEEF,
+            trims: [1, 2, 3, 4],
+            channel_reverse: 0x01,
+            dr_switch: 1,
+            thr_curve_pts: 5,
+            thr_curve_smooth: 0,
+            thr_curve: [0, 25, 50, 75, 100, 0, 0, 0, 0],
+            dr_high: [100, 100, 100],
+            dr_low: [70, 70, 70],
+            expo_high: [0, 0, 0],
+            expo_low: [0, 0, 0],
+            timer_secs: 300,
+            timer_source: 1,
+            rf_power: 0,
+            failsafe_thr: 1000,
+            aux_channels: [7, 8, 5, 6, 9, 10, 0, 0, 0, 0, 0, 0, 0, 0],
+            wing_tail_mix: 0,
+            template_diff: 0,
+            mixes: [LegacyMixLineV1 {
+                target_ch: 1,
+                source: 2,
+                weight: 50,
+                offset: 0,
+                switch: 0,
+                mode: 0,
+            }; 8],
+            failsafe_mode: 0,
+            failsafe_timeout: 20,
+            rf_protocol: 0,
+            crsf_baud: 2,
+            arm_switch: 0,
+            rx_out_mode: 0,
+            servo_rate_hz: 50,
+            rx_serial_proto: 0,
+            crsf_half_duplex: 0,
+        };
+
+        let raw_legacy = unsafe {
+            core::slice::from_raw_parts(&legacy as *const LegacyModelConfigV1 as *const u8, 128)
+        };
+
+        let (migrated, len): (ModelConfig, usize) =
+            ModelConfig::deserialize_from(raw_legacy).expect("Migration success");
+        assert_eq!(len, 128);
+        assert_eq!(&migrated.name, b"LEGACY 01 ");
+        assert_eq!(migrated.rx_id, 0xDEAD_BEEF);
+        assert_eq!(migrated.mixes[0].target_ch, 1);
+        assert_eq!(migrated.mixes[0].weight, 50);
+        assert_eq!(migrated.mixes[8], MixLine::disabled());
+    }
     #[test]
     fn test_dynamic_mixer_source_and_switch_availability() {
         let mut storage = RadioStorage::default_factory();

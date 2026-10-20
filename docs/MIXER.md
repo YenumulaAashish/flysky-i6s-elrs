@@ -281,7 +281,7 @@ Here are proven mixer setups used by RC pilots:
 
 ## 7. Model Profile Storage Layout
 
-Flight mixer parameters are stored directly inside each 348-byte [`ModelConfig`](../src/storage.rs) structure in dedicated 768-byte EEPROM slots (Slot 0..19 at `0x0200`..`0x3E00`):
+Flight mixer parameters are stored directly inside each 348-byte [`ModelConfig`](../src/storage.rs) structure in the on-chip Flash non-volatile log (`sequential-storage` on Pages 60..63 at `0x0801_E000`..`0x0802_0000`):
 
 | Parameter | Type | Bytes | Description |
 | :--- | :--- | :--- | :--- |
@@ -299,7 +299,7 @@ Flight mixer parameters are stored directly inside each 348-byte [`ModelConfig`]
 | `template_diff` | `i8` | 1 | Template differential (-100..+100%) |
 | `mixes` | `[MixLine; 32]` | 256 | 32 freeform matrix mix rules (32 * 8 bytes) |
 
-Total `ModelConfig` size: **exactly 348 bytes** (uses only 45.3% of the 768-byte EEPROM slot).
+Total `ModelConfig` size: **exactly 348 bytes**.
 
 > [!NOTE]
-> In SRAM, an **Active-Model Cache** architecture is employed: `RadioStorage` holds only `RadioConfig` (140 B) and the single active `ModelConfig` (348 B), occupying only 488 bytes total. This leaves over **9.4 KB (>58%) of SRAM** free for stack operations on the STM32F072.
+> In SRAM, an **Active-Model Cache** architecture is employed: `RadioStorage` holds only `RadioConfig` (148 B) and the single active `ModelConfig` (348 B), occupying only 496 bytes total. This leaves over **9.4 KB (>58%) of SRAM** free for stack operations on the STM32F072.
