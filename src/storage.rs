@@ -1156,9 +1156,79 @@ pub fn get_eeprom_status() -> EepromStatus {
 pub struct EepromI2c;
 
 #[cfg(not(test))]
-unsafe fn probe_device(i2c: &pac::i2c1::RegisterBlock, addr_7bit: u8) -> bool {
+#[inline(always)]
+fn clear_i2c_flags(i2c: &pac::i2c1::RegisterBlock) {
+    // Clear NACK, STOP, BERR, ARLO, OVR, PEC, TIMOUT, ALERT flags
+    unsafe {
+        i2c.icr.write(|w| w.bits(0x3F38));
+    }
+}
+
+/// Reset and reinitialize an I2C peripheral (I2C1 or I2C2) following bus faults.
+#[cfg(not(test))]
+fn recover_i2c(bus_num: u8) {
+    let rcc = unsafe { &*pac::RCC::ptr() };
+    unsafe {
+        if bus_num == 1 {
+            let i2c1 = &*pac::I2C1::ptr();
+            // 1. Send STOP request to release lines if busy
+            i2c1.cr2.modify(|r, w| w.bits(r.bits() | (1 << 14)));
+            let mut timeout = 2_000u32;
+            while !i2c1.isr.read().stopf().bit() && timeout > 0 {
+                timeout -= 1;
+            }
+
+            // 2. Disable peripheral and clear flags
+            i2c1.cr1.modify(|_, w| w.pe().clear_bit());
+            clear_i2c_flags(&*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock));
+
+            // 3. Reset peripheral via APB1 peripheral reset (bit 21 = I2C1)
+            rcc.apb1rstr.modify(|r, w| w.bits(r.bits() | (1 << 21)));
+            rcc.apb1rstr.modify(|r, w| w.bits(r.bits() & !(1 << 21)));
+
+            // 4. Restore timing (SYSCLK 48 MHz / 100 kHz standard / 400 kHz fast) and re-enable
+            i2c1.cr1.modify(|_, w| w.pe().clear_bit());
+            i2c1.timingr.write(|w| w.bits(0x00B0_1A4B));
+            clear_i2c_flags(&*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock));
+            i2c1.cr1.modify(|_, w| w.pe().set_bit());
+        } else {
+            let i2c2 = &*pac::I2C2::ptr();
+            let i2c_block = &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock);
+
+            // 1. Send STOP request to release lines if busy
+            i2c2.cr2.modify(|r, w| w.bits(r.bits() | (1 << 14)));
+            let mut timeout = 2_000u32;
+            while !i2c2.isr.read().stopf().bit() && timeout > 0 {
+                timeout -= 1;
+            }
+
+            // 2. Disable peripheral and clear flags
+            i2c2.cr1.modify(|_, w| w.pe().disabled());
+            clear_i2c_flags(i2c_block);
+
+            // 3. Reset peripheral via APB1 peripheral reset (bit 22 = I2C2)
+            rcc.apb1rstr.modify(|r, w| w.bits(r.bits() | (1 << 22)));
+            rcc.apb1rstr.modify(|r, w| w.bits(r.bits() & !(1 << 22)));
+
+            // 4. Restore timing (48 MHz APB1/SYSCLK -> 1 MHz Fast Mode Plus) and re-enable
+            i2c2.cr1.modify(|_, w| w.pe().disabled());
+            i2c2.timingr.write(|w| {
+                w.presc().bits(0)
+                    .scldel().bits(3)
+                    .sdadel().bits(0)
+                    .sclh().bits(9)
+                    .scll().bits(25)
+            });
+            clear_i2c_flags(i2c_block);
+            i2c2.cr1.modify(|_, w| w.pe().enabled());
+        }
+    }
+}
+
+#[cfg(not(test))]
+unsafe fn probe_device(i2c: &pac::i2c1::RegisterBlock, bus_num: u8, addr_7bit: u8) -> bool {
     // Clear flags
-    i2c.icr.write(|w| unsafe { w.bits(0x3F38) });
+    clear_i2c_flags(i2c);
 
     // Try a 1-byte read transaction: SADD = (addr << 1), NBYTES = 1, RD_WRN = 1 (read), START = 1, AUTOEND = 1
     i2c.cr2.write(|w| {
@@ -1172,23 +1242,31 @@ unsafe fn probe_device(i2c: &pac::i2c1::RegisterBlock, addr_7bit: u8) -> bool {
     let mut timeout = 20_000u32;
     while timeout > 0 {
         let isr = i2c.isr.read();
-        if isr.nackf().bit_is_set() {
-            i2c.icr.write(|w| unsafe { w.bits(0x3F38) });
+        if isr.nackf().bit_is_set() || isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+            clear_i2c_flags(i2c);
+            if isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                recover_i2c(bus_num);
+            }
             return false;
         }
         if isr.rxne().bit_is_set() || isr.stopf().bit_is_set() {
             let _dummy = i2c.rxdr.read().rxdata().bits();
             let mut stop_wait = 10_000u32;
             while i2c.isr.read().stopf().bit_is_clear() && stop_wait > 0 {
+                let isr_stop = i2c.isr.read();
+                if isr_stop.berr().bit_is_set() || isr_stop.arlo().bit_is_set() || isr_stop.ovr().bit_is_set() {
+                    recover_i2c(bus_num);
+                    return false;
+                }
                 stop_wait -= 1;
             }
-            i2c.icr.write(|w| unsafe { w.bits(0x3F38) });
+            clear_i2c_flags(i2c);
             return true;
         }
         timeout -= 1;
     }
 
-    i2c.icr.write(|w| unsafe { w.bits(0x3F38) });
+    recover_i2c(bus_num);
     false
 }
 
@@ -1233,7 +1311,7 @@ impl EepromI2c {
         });
 
         // 5. Clear flags and enable I2C2 peripheral
-        i2c2.icr.write(|w| unsafe { w.bits(0x3F38) });
+        clear_i2c_flags(unsafe { &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock) });
         i2c2.cr1.modify(|_, w| w.pe().enabled());
 
         // 6. Adaptive Probe:
@@ -1243,7 +1321,7 @@ impl EepromI2c {
             EEPROM_STATUS.detected = false;
 
             for addr in 0x50..=0x57 {
-                if probe_device(&*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock), addr) {
+                if probe_device(&*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock), 2, addr) {
                     EEPROM_STATUS.bus = 2; // I2C2
                     EEPROM_STATUS.addr = addr;
                     EEPROM_STATUS.detected = true;
@@ -1254,7 +1332,7 @@ impl EepromI2c {
             // Fallback: If not found on I2C2, check I2C1 (PB8/PB9) across addresses 0x50..=0x57
             if !EEPROM_STATUS.detected {
                 for addr in 0x50..=0x57 {
-                    if probe_device(&*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock), addr) {
+                    if probe_device(&*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock), 1, addr) {
                         EEPROM_STATUS.bus = 1; // I2C1
                         EEPROM_STATUS.addr = addr;
                         EEPROM_STATUS.detected = true;
@@ -1265,16 +1343,17 @@ impl EepromI2c {
         }
     }
 
-    /// Read sequential bytes starting at 16-bit EEPROM .
+    /// Read sequential bytes starting at 16-bit EEPROM address.
     pub fn read(addr: u16, data: &mut [u8]) -> Result<(), StorageError> {
         if data.is_empty() {
             return Ok(());
         }
 
         let status = unsafe { EEPROM_STATUS };
+        let bus_num = if status.bus == 1 { 1 } else { 2 };
         let dev_addr = if status.detected { status.addr } else { 0x50 };
         let i2c = unsafe {
-            if status.bus == 1 {
+            if bus_num == 1 {
                 &*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock)
             } else {
                 &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock)
@@ -1294,12 +1373,15 @@ impl EepromI2c {
         for &byte in &addr_bytes {
             let mut timeout = 100_000u32;
             while i2c.isr.read().txis().bit_is_clear() {
-                if i2c.isr.read().nackf().bit_is_set() {
-                    i2c.icr.write(|w| w.nackcf().clear());
+                let isr = i2c.isr.read();
+                if isr.nackf().bit_is_set() || isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                    clear_i2c_flags(i2c);
+                    recover_i2c(bus_num);
                     return Err(StorageError::I2cError);
                 }
                 timeout -= 1;
                 if timeout == 0 {
+                    recover_i2c(bus_num);
                     return Err(StorageError::I2cError);
                 }
             }
@@ -1309,8 +1391,15 @@ impl EepromI2c {
         // Wait for TC (Transfer Complete)
         let mut timeout = 100_000u32;
         while i2c.isr.read().tc().bit_is_clear() {
+            let isr = i2c.isr.read();
+            if isr.nackf().bit_is_set() || isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                clear_i2c_flags(i2c);
+                recover_i2c(bus_num);
+                return Err(StorageError::I2cError);
+            }
             timeout -= 1;
             if timeout == 0 {
+                recover_i2c(bus_num);
                 return Err(StorageError::I2cError);
             }
         }
@@ -1332,8 +1421,15 @@ impl EepromI2c {
             for i in 0..chunk_len {
                 let mut byte_timeout = 100_000u32;
                 while i2c.isr.read().rxne().bit_is_clear() {
+                    let isr = i2c.isr.read();
+                    if isr.nackf().bit_is_set() || isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                        clear_i2c_flags(i2c);
+                        recover_i2c(bus_num);
+                        return Err(StorageError::I2cError);
+                    }
                     byte_timeout -= 1;
                     if byte_timeout == 0 {
+                        recover_i2c(bus_num);
                         return Err(StorageError::I2cError);
                     }
                 }
@@ -1343,17 +1439,31 @@ impl EepromI2c {
             if !is_last {
                 let mut tc_timeout = 100_000u32;
                 while i2c.isr.read().tc().bit_is_clear() {
+                    let isr = i2c.isr.read();
+                    if isr.nackf().bit_is_set() || isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                        clear_i2c_flags(i2c);
+                        recover_i2c(bus_num);
+                        return Err(StorageError::I2cError);
+                    }
                     tc_timeout -= 1;
                     if tc_timeout == 0 {
+                        recover_i2c(bus_num);
                         return Err(StorageError::I2cError);
                     }
                 }
             } else {
                 let mut stop_timeout = 100_000u32;
                 while i2c.isr.read().stopf().bit_is_clear() {
+                    let isr = i2c.isr.read();
+                    if isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                        clear_i2c_flags(i2c);
+                        recover_i2c(bus_num);
+                        return Err(StorageError::I2cError);
+                    }
                     stop_timeout -= 1;
                     if stop_timeout == 0 {
-                        break;
+                        recover_i2c(bus_num);
+                        return Err(StorageError::I2cError);
                     }
                 }
                 i2c.icr.write(|w| w.stopcf().clear());
@@ -1372,9 +1482,10 @@ impl EepromI2c {
         }
 
         let status = unsafe { EEPROM_STATUS };
+        let bus_num = if status.bus == 1 { 1 } else { 2 };
         let dev_addr = if status.detected { status.addr } else { 0x50 };
         let i2c = unsafe {
-            if status.bus == 1 {
+            if bus_num == 1 {
                 &*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock)
             } else {
                 &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock)
@@ -1396,12 +1507,15 @@ impl EepromI2c {
         for &byte in &addr_bytes {
             let mut timeout = 100_000u32;
             while i2c.isr.read().txis().bit_is_clear() {
-                if i2c.isr.read().nackf().bit_is_set() {
-                    i2c.icr.write(|w| w.nackcf().clear());
+                let isr = i2c.isr.read();
+                if isr.nackf().bit_is_set() || isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                    clear_i2c_flags(i2c);
+                    recover_i2c(bus_num);
                     return Err(StorageError::I2cError);
                 }
                 timeout -= 1;
                 if timeout == 0 {
+                    recover_i2c(bus_num);
                     return Err(StorageError::I2cError);
                 }
             }
@@ -1412,12 +1526,15 @@ impl EepromI2c {
         for &byte in chunk {
             let mut timeout = 100_000u32;
             while i2c.isr.read().txis().bit_is_clear() {
-                if i2c.isr.read().nackf().bit_is_set() {
-                    i2c.icr.write(|w| w.nackcf().clear());
+                let isr = i2c.isr.read();
+                if isr.nackf().bit_is_set() || isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                    clear_i2c_flags(i2c);
+                    recover_i2c(bus_num);
                     return Err(StorageError::I2cError);
                 }
                 timeout -= 1;
                 if timeout == 0 {
+                    recover_i2c(bus_num);
                     return Err(StorageError::I2cError);
                 }
             }
@@ -1427,21 +1544,28 @@ impl EepromI2c {
         // Wait for STOPF
         let mut stop_timeout = 100_000u32;
         while i2c.isr.read().stopf().bit_is_clear() {
+            let isr = i2c.isr.read();
+            if isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                clear_i2c_flags(i2c);
+                recover_i2c(bus_num);
+                return Err(StorageError::I2cError);
+            }
             stop_timeout -= 1;
             if stop_timeout == 0 {
-                break;
+                recover_i2c(bus_num);
+                return Err(StorageError::I2cError);
             }
         }
         i2c.icr.write(|w| w.stopcf().clear());
 
         // 3. ACK Polling for EEPROM internal write cycle (max 5ms)
-        Self::poll_ack(i2c, dev_addr);
+        Self::poll_ack(i2c, bus_num, dev_addr)?;
 
         Ok(())
     }
 
     /// Poll I2C address until EEPROM ACKs that its internal self-timed write cycle has completed.
-    fn poll_ack(i2c: &pac::i2c1::RegisterBlock, dev_addr: u8) {
+    fn poll_ack(i2c: &pac::i2c1::RegisterBlock, bus_num: u8, dev_addr: u8) -> Result<(), StorageError> {
         let mut retries = 50u32; // up to ~10ms total polling
 
         while retries > 0 {
@@ -1460,7 +1584,13 @@ impl EepromI2c {
             let mut wait = 20_000u32;
             let mut got_nack = false;
             while i2c.isr.read().stopf().bit_is_clear() && wait > 0 {
-                if i2c.isr.read().nackf().bit_is_set() {
+                let isr = i2c.isr.read();
+                if isr.berr().bit_is_set() || isr.arlo().bit_is_set() || isr.ovr().bit_is_set() {
+                    clear_i2c_flags(i2c);
+                    recover_i2c(bus_num);
+                    return Err(StorageError::I2cError);
+                }
+                if isr.nackf().bit_is_set() {
                     got_nack = true;
                     i2c.icr.write(|w| w.nackcf().clear());
                 }
@@ -1469,7 +1599,7 @@ impl EepromI2c {
             i2c.icr.write(|w| w.stopcf().clear());
 
             if !got_nack && wait > 0 {
-                return; // Device ACKed, write complete!
+                return Ok(()); // Device ACKed, write complete!
             }
 
             {
@@ -1479,6 +1609,9 @@ impl EepromI2c {
                 }
             }
         }
+
+        recover_i2c(bus_num);
+        Err(StorageError::I2cError)
     }
 
     /// Write arbitrary slice with automatic page boundary splitting to prevent wrap-around.
