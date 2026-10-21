@@ -5,6 +5,34 @@ All notable changes to the `flysky-i6s-rs` project will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-20
+
+### Added
+- **32-Line Free-Matrix Mixing & Complex Curves Subsystem ([`src/mixer.rs`](src/mixer.rs), [`src/curve.rs`](src/curve.rs), [`src/ui/menu/screens/mixer.rs`](src/ui/menu/screens/mixer.rs))**:
+  - Expanded mixer capacity from 8 to 32 cascading lines (`NUM_MIXES = 32`) supporting all 18 output channels.
+  - Added dynamic weight modulation (`weight_src`): allow any stick, pot, switch, or channel to modulate mixer line weight in real time.
+  - Implemented configurable 5-point, 7-point, and 9-point spline and linear throttle/pitch curves with smooth natural-cubic interpolation.
+  - Added dedicated curve editor screen with visual preview and real-time point adjustments.
+- **Hardware Expansion & Pin Remapping ([`src/hw/mod.rs`](src/hw/mod.rs), [`src/hw/adc.rs`](src/hw/adc.rs), [`src/input.rs`](src/input.rs), [`src/storage.rs`](src/storage.rs))**:
+  - Remapped 5-channel extended ADC inputs to `PC1..PC5` (ADC channels 11..15) exposing up to 7 potentiometers (`VRA..VRG`) and 13 switches (`SA..SF`, `SG/SH` on J4, `SWI..SWM`).
+  - Added configurable `AdcInputMode::Off` mode to disable unused auxiliary channels and cleanly filter them from menus, telemetry, and dashboard screens.
+  - Added J4 SWD dual-button mod (`SG`/`SH` on `PA13`/`PA14`) with runtime SWD/GPIO toggle in Radio Setup.
+- **I2C EEPROM Storage Architecture ([`src/storage.rs`](src/storage.rs), [`docs/CALIBRATION_AND_STORAGE.md`](docs/CALIBRATION_AND_STORAGE.md))**:
+  - Integrated external 16 KB I2C EEPROM driver (FT24C128A / 24AA128) supporting 20 model configurations (768 B slots) with fast model switching.
+  - Dual-slot A/B safe save for `RadioConfig` preventing corruption during unexpected power cuts.
+  - Adaptive bus & address probe: auto-detects EEPROM on primary I2C2 (`PB10`/`PB11`) with fallback to I2C1 (`PB8`/`PB9`) across addresses `0x50..0x57`.
+  - Transparent in-place migration from legacy v1 (128 B) model format to v2 (348 B).
+- **Diagnostics Screen Enhancements ([`src/ui/menu/screens/diag.rs`](src/ui/menu/screens/diag.rs))**:
+  - Added real-time I2C EEPROM bus status, detected 7-bit slave address, read verified OK indicator, and write error diagnostics.
+
+### Fixed
+- **I2C Bus Fault Recovery & RCC Reset (`recover_i2c`) ([`src/storage.rs`](src/storage.rs), [`src/hw/touch/ft6236.rs`](src/hw/touch/ft6236.rs))**:
+  - Implemented hardware APB1 peripheral reset via RCC (`apb1rstr` bits 21 & 22) for both I2C1 and I2C2 peripherals following bus stalls or framing errors.
+  - Added bounded STOP sequence to release stuck bus lines.
+  - Comprehensive bus error checking (`BERRF`, `ARLOCF`, `OVRCF`, `NACKCF`, timeout) across probe, sequential read, page write, and ACK polling routines.
+- **Switch Toggle Audio Beep ([`src/main.rs`](src/main.rs))**:
+  - Wired `RadioConfig::switch_beep` to trigger short audio confirmation upon any physical switch state transition.
+
 ## [0.2.0] - 2026-10-19
 
 ### Added
