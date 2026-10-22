@@ -1180,7 +1180,7 @@ fn recover_i2c(bus_num: u8) {
 
             // 2. Disable peripheral and clear flags
             i2c1.cr1.modify(|_, w| w.pe().clear_bit());
-            clear_i2c_flags(&*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock));
+            clear_i2c_flags(&*pac::I2C1::ptr());
 
             // 3. Reset peripheral via APB1 peripheral reset (bit 21 = I2C1)
             rcc.apb1rstr.modify(|r, w| w.bits(r.bits() | (1 << 21)));
@@ -1189,11 +1189,11 @@ fn recover_i2c(bus_num: u8) {
             // 4. Restore timing (SYSCLK 48 MHz / 100 kHz standard / 400 kHz fast) and re-enable
             i2c1.cr1.modify(|_, w| w.pe().clear_bit());
             i2c1.timingr.write(|w| w.bits(0x00B0_1A4B));
-            clear_i2c_flags(&*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock));
+            clear_i2c_flags(&*pac::I2C1::ptr());
             i2c1.cr1.modify(|_, w| w.pe().set_bit());
         } else {
             let i2c2 = &*pac::I2C2::ptr();
-            let i2c_block = &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock);
+            let i2c_block = &*pac::I2C2::ptr();
 
             // 1. Send STOP request to release lines if busy
             i2c2.cr2.modify(|r, w| w.bits(r.bits() | (1 << 14)));
@@ -1311,7 +1311,7 @@ impl EepromI2c {
         });
 
         // 5. Clear flags and enable I2C2 peripheral
-        clear_i2c_flags(unsafe { &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock) });
+        clear_i2c_flags(unsafe { &*pac::I2C2::ptr() });
         i2c2.cr1.modify(|_, w| w.pe().enabled());
 
         // 6. Adaptive Probe:
@@ -1321,7 +1321,7 @@ impl EepromI2c {
             EEPROM_STATUS.detected = false;
 
             for addr in 0x50..=0x57 {
-                if probe_device(&*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock), 2, addr) {
+                if probe_device(&*pac::I2C2::ptr(), 2, addr) {
                     EEPROM_STATUS.bus = 2; // I2C2
                     EEPROM_STATUS.addr = addr;
                     EEPROM_STATUS.detected = true;
@@ -1332,7 +1332,7 @@ impl EepromI2c {
             // Fallback: If not found on I2C2, check I2C1 (PB8/PB9) across addresses 0x50..=0x57
             if !EEPROM_STATUS.detected {
                 for addr in 0x50..=0x57 {
-                    if probe_device(&*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock), 1, addr) {
+                    if probe_device(&*pac::I2C1::ptr(), 1, addr) {
                         EEPROM_STATUS.bus = 1; // I2C1
                         EEPROM_STATUS.addr = addr;
                         EEPROM_STATUS.detected = true;
@@ -1354,9 +1354,9 @@ impl EepromI2c {
         let dev_addr = if status.detected { status.addr } else { 0x50 };
         let i2c = unsafe {
             if bus_num == 1 {
-                &*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock)
+                &*pac::I2C1::ptr()
             } else {
-                &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock)
+                &*pac::I2C2::ptr()
             }
         };
 
@@ -1486,9 +1486,9 @@ impl EepromI2c {
         let dev_addr = if status.detected { status.addr } else { 0x50 };
         let i2c = unsafe {
             if bus_num == 1 {
-                &*(pac::I2C1::ptr() as *const pac::i2c1::RegisterBlock)
+                &*pac::I2C1::ptr()
             } else {
-                &*(pac::I2C2::ptr() as *const pac::i2c1::RegisterBlock)
+                &*pac::I2C2::ptr()
             }
         };
 
